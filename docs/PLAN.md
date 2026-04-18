@@ -128,24 +128,22 @@ out-of-range parameters, raw 3-byte writes, and any channel-style commands.
 Write up the result — positive or negative — in `docs/RGB_EXPERIMENT.md`.
 
 **4b — Show-scrub fallback (~1 day), if 4a is negative.** Mirror the manual
-technique pool owners use today: start a color-transition show, wait for the
-moment it passes through the desired color, then freeze it. Concretely:
+technique pool owners use today — and which the official app exposes
+explicitly via a **"Hold" button** that freezes the fixture on whatever
+color it's currently displaying mid-show. Concretely:
 
 1. **Characterize every show.** Record each of the 7 shows on video under
    controlled lighting starting from a known t=0 (the moment the "start
    show" command is sent). Sample frames at a fixed interval, extract the
    dominant RGB, and build a time-series per show. Result: a table mapping
    `(show_id, t_ms) → (R, G, B)`.
-2. **Identify the "freeze" primitive.** The controller may expose this
-   implicitly — candidates to test: a dedicated pause/hold opcode, sending
-   the current show's matching solid-color preset mid-transition, repeatedly
-   issuing a "set solid color" with out-of-range index, or exploiting
-   timing-sensitive repeat-writes that lock the fixture into a frame. This
-   is the single biggest unknown; it's what determines whether 4b works.
+2. **Capture the Hold opcode.** The "Hold" button in the official app is
+   already the freeze primitive — no discovery work needed beyond capturing
+   the BLE write that the button generates during the Phase 1 sweep.
 3. **Build the picker.** In the custom component, expose a `set_color(r,g,b)`
    method that (a) finds the closest `(show, offset)` in the characterized
    table, (b) issues the "start show" command, (c) waits `offset_ms`,
-   (d) issues the freeze primitive. Report back the actual achieved color
+   (d) issues the Hold opcode. Report back the actual achieved color
    (nearest-point distance) so HA can show the delta.
 4. **UX.** If 4b works: add an HSV/color-wheel to the LVGL UI and an
    `hs_color` mode on the HA light entity, with a "closest match" badge when
