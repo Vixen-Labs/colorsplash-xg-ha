@@ -120,14 +120,49 @@ bridge that:
 4. Status bar (Wi-Fi, HA API, BLE, RSSI) plus a standalone-mode verification
    pass: disconnect HA, confirm every UI action still drives the light.
 
-### Phase 4 — RGB experiment (1 issue, time-boxed ~1 day)
+### Phase 4 — RGB experiment (2 issues, time-boxed ~2 days total)
 
-- After the protocol is understood, spend one focused session probing
-  undocumented opcodes, out-of-range parameters, raw 3-byte writes, any
-  channel-style commands.
-- Write up the result — positive or negative — in `docs/RGB_EXPERIMENT.md`.
-- If feasible, add a 24-bit color picker to the LVGL UI and the HA light
-  entity. Otherwise, close the issue with the negative result documented.
+**4a — Direct arbitrary RGB probe (~1 day).** After the protocol is
+understood, spend one focused session probing undocumented opcodes,
+out-of-range parameters, raw 3-byte writes, and any channel-style commands.
+Write up the result — positive or negative — in `docs/RGB_EXPERIMENT.md`.
+
+**4b — Show-scrub fallback (~1 day), if 4a is negative.** Mirror the manual
+technique pool owners use today: start a color-transition show, wait for the
+moment it passes through the desired color, then freeze it. Concretely:
+
+1. **Characterize every show.** Record each of the 7 shows on video under
+   controlled lighting starting from a known t=0 (the moment the "start
+   show" command is sent). Sample frames at a fixed interval, extract the
+   dominant RGB, and build a time-series per show. Result: a table mapping
+   `(show_id, t_ms) → (R, G, B)`.
+2. **Identify the "freeze" primitive.** The controller may expose this
+   implicitly — candidates to test: a dedicated pause/hold opcode, sending
+   the current show's matching solid-color preset mid-transition, repeatedly
+   issuing a "set solid color" with out-of-range index, or exploiting
+   timing-sensitive repeat-writes that lock the fixture into a frame. This
+   is the single biggest unknown; it's what determines whether 4b works.
+3. **Build the picker.** In the custom component, expose a `set_color(r,g,b)`
+   method that (a) finds the closest `(show, offset)` in the characterized
+   table, (b) issues the "start show" command, (c) waits `offset_ms`,
+   (d) issues the freeze primitive. Report back the actual achieved color
+   (nearest-point distance) so HA can show the delta.
+4. **UX.** If 4b works: add an HSV/color-wheel to the LVGL UI and an
+   `hs_color` mode on the HA light entity, with a "closest match" badge when
+   the target isn't exactly reachable.
+
+Honest caveats on 4b:
+- Timing precision on the ESP32 is fine (millisecond jitter), but BLE
+  write latency can be 30–200 ms and is not deterministic — we may need to
+  sync off a notification rather than wall-clock time.
+- Show characterization is a one-time step per firmware version; if the
+  controller or fixture firmware changes, the table is invalidated.
+- Color coverage depends entirely on which shows exist. Some shows may be
+  abrupt (bad for scrubbing); at least one smooth hue-sweep show is needed
+  for wide coverage.
+- Even with perfect timing, the reachable gamut is bounded by the palette
+  the fixture's LED drivers produce during transitions — we may get a
+  decent hue sweep but limited saturation/brightness control.
 
 ### Phase 5 — Reliability & polish (3 issues)
 
@@ -166,4 +201,5 @@ bridge that:
 ## Issue / milestone map
 
 Each phase above becomes a GitHub milestone. Each numbered bullet inside a
-phase becomes one GitHub issue. Total: 22 issues across 6 milestones.
+phase becomes one GitHub issue. Total: 23 issues across 6 milestones
+(Phase 4 expanded from 1 to 2 issues to cover the show-scrub fallback).
