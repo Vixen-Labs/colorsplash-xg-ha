@@ -29,6 +29,19 @@ bridge that:
 | BLE exclusivity | ESP32 owns the link 24/7; phone app cannot connect while ESP32 is connected |
 | Capture tools | Android HCI snoop, iOS via macOS PacketLogger, nRF52840 USB dongle (on hand) |
 
+## Confirmed app UI surface
+
+The official ColorSplash XG app exposes exactly these controls (user-confirmed exhaustive; any captured traffic that doesn't map to one of these is a red flag worth investigating):
+
+- **Connect** — opens a sheet, no password/confirmation
+- **Disconnect** — closes BLE
+- **Standby on/off** — blanks the light; resuming restores the previous color/show (controller maintains state)
+- **Lock** — freezes the current color during a show (this is the "Hold" / freeze primitive used by Phase 4b)
+- **Return** — semantics unclear; possibly recalls the last Lock-held color. To be determined by the Phase 1 sweep
+- **5 solid colors** and **7 shows**
+
+No brightness slider, no show-speed slider, no scheduling, no settings screen, no long-press behaviors. The HA light entity will therefore expose `on/off` + `effect` only (no `brightness`).
+
 ## Architecture
 
 ```
