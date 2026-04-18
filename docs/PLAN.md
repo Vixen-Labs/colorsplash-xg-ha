@@ -46,7 +46,7 @@ Controls:
 - **Lock** (bottom bar) — freezes the current color during a show; this is the freeze primitive for Phase 4b
 - **Return** (bottom bar) — semantics unclear, to be determined by the Phase 1 sweep
 - 5 solid colors: **Parisian Blue**, **Brazilian Red**, **Arctic White**, **Miami Pink**, **New Zealand Green**
-- 7 shows: **Nova**, **Super Nova**, **Northern Lights**, **Tidal Wave**, and three more pending confirmation from the user
+- 7 shows: **Nova**, **Super Nova**, **Northern Lights**, **Tidal Wave**, **Patriot Dream**, **Desert Skies**, **Peruvian Paradise**
 
 No brightness slider, no show-speed slider, no scheduling, no settings screen, no long-press behaviors. The HA light entity will therefore expose `on/off` (mapped to Standby) + `effect` (the 12 named effects) only — no `brightness`.
 
