@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ESPHome build output
+firmware/esphome/.esphome/
+firmware/esphome/secrets.yaml
+**/.esphome/
+
+# BLE captures (keep the captures/ directory via captures/README.md)
+captures/*
+!captures/README.md
+*.pcap
+*.pcapng
+*.log
+btsnoop_hci.log
+
+# APK / decompiled source — never commit
+*.apk
+*.ipa
+decompiled/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
