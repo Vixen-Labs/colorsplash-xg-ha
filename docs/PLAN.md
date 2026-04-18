@@ -149,10 +149,21 @@ color it's currently displaying mid-show. Concretely:
    `hs_color` mode on the HA light entity, with a "closest match" badge when
    the target isn't exactly reachable.
 
+**Timing source for show-scrub (priority order):**
+1. **A controller-emitted notification on state change**, if Phase 1 finds
+   one. Cleanest, no extra hardware.
+2. **Naive wall-clock from the BLE write**, accepting 30–200 ms of jitter.
+   May produce a noticeable hue error but probably acceptable for a
+   slow-changing pool light.
+3. **External photodiode** observing the fixture's brief blackout when it
+   transitions to a new state. Deterministic t=0 on the rising edge after
+   blackout. Mounting location TBD (indoor with sightline through a window,
+   or a separate outdoor ESPNow sensor node) — deferred until Phases 1 and
+   4b prove the sensor is actually needed. Bonus: a photodiode also gives
+   us ground-truth "is the light on" confirmation, useful outside
+   show-scrub.
+
 Honest caveats on 4b:
-- Timing precision on the ESP32 is fine (millisecond jitter), but BLE
-  write latency can be 30–200 ms and is not deterministic — we may need to
-  sync off a notification rather than wall-clock time.
 - Show characterization is a one-time step per firmware version; if the
   controller or fixture firmware changes, the table is invalidated.
 - Color coverage depends entirely on which shows exist. Some shows may be
@@ -161,6 +172,8 @@ Honest caveats on 4b:
 - Even with perfect timing, the reachable gamut is bounded by the palette
   the fixture's LED drivers produce during transitions — we may get a
   decent hue sweep but limited saturation/brightness control.
+- The photodiode option only works at night; daylight overwhelms the pool
+  light and the blackout becomes undetectable.
 
 ### Phase 5 — Reliability & polish (3 issues)
 
@@ -199,5 +212,6 @@ Honest caveats on 4b:
 ## Issue / milestone map
 
 Each phase above becomes a GitHub milestone. Each numbered bullet inside a
-phase becomes one GitHub issue. Total: 23 issues across 6 milestones
-(Phase 4 expanded from 1 to 2 issues to cover the show-scrub fallback).
+phase becomes one GitHub issue. Total: 24 issues across 6 milestones
+(Phase 4 expanded from 1 to 3 issues to cover the show-scrub fallback and
+an optional photodiode sync sensor).
