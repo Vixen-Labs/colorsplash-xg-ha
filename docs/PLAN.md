@@ -31,16 +31,24 @@ bridge that:
 
 ## Confirmed app UI surface
 
-The official ColorSplash XG app exposes exactly these controls (user-confirmed exhaustive; any captured traffic that doesn't map to one of these is a red flag worth investigating):
+The official ColorSplash XG app layout (verified from user screenshots):
 
-- **Connect** — opens a sheet, no password/confirmation
-- **Disconnect** — closes BLE
-- **Standby on/off** — blanks the light; resuming restores the previous color/show (controller maintains state)
-- **Lock** — freezes the current color during a show (this is the "Hold" / freeze primitive used by Phase 4b)
-- **Return** — semantics unclear; possibly recalls the last Lock-held color. To be determined by the Phase 1 sweep
-- **5 solid colors** and **7 shows**
+- Header: app title "XG Controller" + **Standby** toggle (top-right)
+- Two status cards: **Status** (tap to open the device-select sheet) + **Network** (Bluetooth)
+- 4×3 grid of 12 effect tiles
+- Persistent bottom bar: **Lock** | **Disconnect** | **Return**
 
-No brightness slider, no show-speed slider, no scheduling, no settings screen, no long-press behaviors. The HA light entity will therefore expose `on/off` + `effect` only (no `brightness`).
+Controls:
+
+- **Connect** (via tapping the Status card → "Select device" sheet → "Connect to XG controller"). No password/confirmation.
+- **Disconnect** (bottom bar)
+- **Standby toggle** (header) — blanks the light; resuming restores the previous color/show (controller maintains state)
+- **Lock** (bottom bar) — freezes the current color during a show; this is the freeze primitive for Phase 4b
+- **Return** (bottom bar) — semantics unclear, to be determined by the Phase 1 sweep
+- 5 solid colors: **Parisian Blue**, **Brazilian Red**, **Arctic White**, **Miami Pink**, **New Zealand Green**
+- 7 shows: **Nova**, **Super Nova**, **Northern Lights**, **Tidal Wave**, and three more pending confirmation from the user
+
+No brightness slider, no show-speed slider, no scheduling, no settings screen, no long-press behaviors. The HA light entity will therefore expose `on/off` (mapped to Standby) + `effect` (the 12 named effects) only — no `brightness`.
 
 ## Architecture
 
