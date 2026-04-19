@@ -72,6 +72,11 @@ On the phone:
    with `adb bugreport` (see §4) and confirm a `btsnoop_hci.log` is
    present inside. You don't have to analyze it, just confirm it exists.
 
+   > Before `adb bugreport` will work, **USB debugging** must be enabled
+   > (Settings → Developer options → USB debugging) and the phone must
+   > be connected via a data-capable USB cable with the host fingerprint
+   > accepted. If `adb` hangs on `- waiting for device -`, see §4.3.
+
 ### 1.3 On some OEMs: also enable "Always log everything"
 
 Samsung and some Xiaomi builds add an extra "Disable absolute volume"
@@ -116,6 +121,29 @@ If another client is already connected, the Android app will either
 fail to see the device or see it but fail to connect.
 
 ## 3. Running the capture session
+
+### 3.0 Scripted path: `tools/capture-session`
+
+[`tools/capture-session`](../tools/capture-session) automates everything
+in §3.1–§3.3 and the §4.1 pull: it creates the session directory, writes
+`session_start` at the top of `SWEEP_LOG.md`, prompts for each action
+with the remaining time shown, timestamps every entry in the required
+UTC millisecond format, and runs `adb bugreport` + extracts
+`btsnoop_hci.log` when you end the session.
+
+```sh
+cd captures
+../tools/capture-session                 # default suffix: first-pair
+../tools/capture-session steady-state    # second pass, already-bonded
+```
+
+End the session by pressing Enter on an empty prompt, pressing Ctrl-D,
+or letting the 5-minute timer expire. The script then pulls the log
+automatically — make sure the phone is connected with USB debugging
+authorized before you start (see §1.2 and §4.3).
+
+If you prefer to drive the steps by hand, the manual procedure is in
+§3.1 onward.
 
 ### 3.1 Set up the companion log
 
