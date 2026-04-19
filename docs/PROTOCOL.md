@@ -1,10 +1,11 @@
-# ColorSplash XG BLE protocol (v0.1)
+# ColorSplash XG BLE protocol (v0.2)
 
-**Status:** v0.1 — derived from three HCI snoop captures on 2026-04-19 from
+**Status:** v0.2 — derived from four HCI snoop captures on 2026-04-19 from
 a Samsung Galaxy Tab S9 Ultra. The BLE topology and framing pattern are
-confirmed; the byte-to-effect command table is partially confirmed and has
-at least one cross-session ambiguity that will be resolved by a deliberate
-calibration capture (see [Next steps](#next-steps)).
+confirmed. The byte-to-effect mapping is **not yet solved** — a calibration
+capture with systematic tile tapping revealed that the single-byte values
+appearing on handle `0x000f` during sessions do **not** correspond 1:1 to
+user taps. See [The mapping problem](#the-mapping-problem) below.
 
 See [`docs/CAPTURING.md`](CAPTURING.md) for how to produce the inputs, and
 [`docs/PLAN.md`](PLAN.md#phase-1--reverse-engineering-7-issues) for where
@@ -59,58 +60,94 @@ counter observed. The entire command set is encoded in a single byte.
 
 ## Command / state bytes observed
 
-Across the three sessions the following single-byte values appear on
-handle `0x000f` (both outbound writes and inbound indication echoes):
+The full set of one-byte values seen on handle `0x000f` across the four
+captures is:
 
 ```
-0x00  0x07  0x08  0x09  0x0a  0x0b  0x0c  0x0d  0x0e
+0x00  0x01  0x02  0x03  0x04  0x05  0x06  0x07
+0x08  0x09  0x0a  0x0b  0x0c  0x0d  0x0e
 ```
 
-That's **9 distinct bytes** for **15 interactable UI elements** the app
-exposes (5 colors + 7 shows + Lock + Return + Standby). Either some UI
-elements do not produce writes (e.g. Return may be client-side only,
-reflecting the last saved state without telling the controller), or the
-byte range extends beyond what these captures exercised.
+That's **15 distinct bytes**, which matches the **15 interactable UI
+elements** (5 solid colors + 7 shows + Lock + Return + Standby) — strong
+evidence that one byte = one UI element, even though the mapping itself
+is not solved.
 
-### Tentative mapping (NOT confirmed)
+## The mapping problem
 
-The table below is derived by correlating write timestamps with
-`SWEEP_LOG.md` action lines. Deltas in the single-digit seconds indicate
-a confident match; double-digit deltas mean the correlation drifted and
-the mapping may be off by one action in either direction.
+The byte-to-effect mapping cannot be recovered from HCI snoop alone.
+Three observations establish this:
 
-| Byte | Best-guess effect | Source session | Tap→write Δ | Confidence |
-|---|---|---|---|---|
-| `0x0b` | Patriot Dream (show) | `-steady-state` | 0.9 s | **High** |
-| `0x0c` | Desert Skies (show) | `-steady-state` | 0.7 s | **High** |
-| `0x0a` | Lock (on a solid color) | `-steady-state` | 5.9 s | Medium |
-| `0x0d` | Standby | `-steady-state` | 4.0 s | Medium |
-| `0x09` | Peruvian Paradise (show) | `-steady-state` | 8.5 s | Low |
-| `0x08` | Northern Lights (show) | `-steady-state` | 12.0 s | Low |
-| `0x07` | Return | `-steady-state` | 12.2 s | Low |
-| `0x00` | Return (second / third invocation) | `-steady-state` | 2.2 s | Medium, but ambiguous (Return writing a variable byte is surprising) |
-| `0x0e` | Return (another context) | `-first-pair` | 10.1 s | Low |
+1. **Every session's in-window writes produce the same ordered byte
+   sequence**: `08, 0a, 0b, 0c, 09, 07, 0d, 0e, 00` (9 bytes),
+   regardless of which tiles the user actually tapped. Session 1 had
+   the user tapping colors; session 2 had the user tapping shows; the
+   calibration session had the user tapping all 15 UI elements in a
+   deliberate order. All three produced the same 9-byte sequence in the
+   same order. A byte sequence that does not vary with input cannot be
+   the identity of the input.
+2. **The remaining bytes `0x01-0x06` only appear in post-session
+   autonomous activity.** After a capture session ends, the app
+   continues to reconnect and send writes periodically over the
+   following hours, cycling through the full byte range. The user
+   confirms none of this activity was driven by intentional taps.
+3. **There is no other BLE endpoint carrying commands.** Writes occur
+   only to handles `0x000f` (commands) and `0x0010` (CCCD subscribe).
+   No other characteristic receives traffic during a session. If user
+   taps caused BLE writes, those writes would have to appear on
+   `0x000f` — and they'd have to be distinguishable from the
+   autonomous sequence, which they are not.
 
-#### The cross-session conflict
+### Two plausible explanations
 
-In `-first-pair` the byte `0x0b` correlates to "tap color blue" with a
-3.2 s delta, and in `-steady-state` the same byte correlates to "tap
-Patriot Dream" with a 0.9 s delta. The 0.9 s delta is much more credible
-than 3.2 s, so **either** (a) `0x0b` legitimately means two different
-things in two contexts (unlikely for a single-byte command protocol),
-**or** (b) the `-first-pair` correlation is drifting by one action and
-blue's real opcode is a different byte. The calibration session below
-will distinguish these.
+**(a) The app writes an identical sync / init sequence on every connect,
+and our captures happen to end before real user-tap writes get sent.**
+The handshake sequence would explain the invariance across sessions.
+This is weakened by the calibration session spanning 4 minutes with 15
+deliberate taps — enough time for tap-driven writes to appear if they
+exist at the rate one per tap.
 
-## Observed behaviors (from SWEEP_LOG narratives + capture timing)
+**(b) User taps do not produce one-byte writes. The app uses some other
+mechanism to communicate taps — possibly ATT Prepare Write /
+Execute Write (long writes) the filter is missing, possibly a different
+characteristic not yet discovered, or possibly the controller itself is
+driving state changes based on something other than the user's phone.**
+This is weakened by the observed 60 ms write-to-indication echo pattern,
+which looks exactly like a command-response protocol should look.
+
+Both hypotheses are consistent with the captured data. Distinguishing
+them requires looking at the Android APK (PLAN.md Phase 1 issue #2) to
+see what the app actually sends when a tile is tapped. The BLE
+service/characteristic classes the app uses, the packet builders, and
+any framing constants will resolve this unambiguously.
+
+## What the HCI data _does_ pin down
+
+Independent of the mapping problem, these structural claims are
+supported by the captures:
+
+- Handle `0x000f` is the command + state characteristic. All commands
+  and all state-indications flow through this one characteristic.
+- Write framing is a single value byte, no opcode header, no length
+  prefix, no checksum, no sequence counter.
+- The controller confirms each write with a Handle Value Indication
+  echoing the same value byte back ~60 ms later — a strict ping-pong
+  transaction per command.
+- The byte space `0x00-0x0e` covers exactly the number of UI
+  interactable elements, suggesting the encoding is a flat index across
+  all of them.
+
+## Observed behaviors (from SWEEP_LOG narratives)
+
+These observations come from the user's in-session narrations and
+visual observation of the physical fixture. They do not depend on the
+unresolved byte mapping.
 
 ### Return
 
-Return does **not** send a fixed opcode. In three distinct Return taps
-across the captures, different bytes went out on the wire (`0x07`, `0x0e`,
-`0x00`). This matches the user's observation that Return reverts to "the
-last held solid color" — i.e. Return appears to re-issue the most
-recently saved effect byte, not an opcode that literally means "return".
+User-visible behavior: tapping Return after a show or color reverts the
+light to the most recently saved solid color — i.e. Return is a "revert
+to locked state" operation, not a navigation primitive.
 
 > _SWEEP_LOG `-first-pair`_: `tap Return (reverts to green)`
 >
@@ -128,13 +165,11 @@ light off. The user captured this in two independent sessions:
 > tapped another color or show, like the app has no idea what's
 > displaying)`
 
-HCI-layer interpretation: in both sessions, the orphan Standby tap has
-zero correlated writes within any reasonable window — the app simply
-does not transmit anything when the user taps Standby without a known
-last-state. Once the user taps a color or show, the app has a state to
-persist, and subsequent Standby taps produce writes. **This is an
-app-side bug, not a controller-side bug** — the HCI log is silent on the
-orphan tap.
+The user's interpretation — "like the app has no idea what's displaying"
+— is consistent with an app-side state bug: the phone's UI tracks a
+"last applied state" and refuses to issue a Standby until it has one.
+Independent of the byte mapping, the bug is observable at the UI level
+on every cold launch.
 
 ### Lock
 
@@ -185,15 +220,16 @@ without requiring any state transfer from the central.
 
 ## Next steps
 
-1. **Calibration sweep.** A single ~2 minute session with deliberate 5
-   second gaps between each tap: cold connect, each color in the issue's
-   list order, each show in order, then Lock / Return / Standby. The 5
-   second gaps eliminate the tap-to-write latency ambiguity so every
-   byte pins down exactly. Planned as a follow-up capture for this
-   phase.
+1. **APK decompile (PLAN.md Phase 1 issue #2) is now the critical path.**
+   Running `jadx` over the ColorSplash XG APK will expose the BLE
+   service class, the specific bytes the app writes on each tile tap,
+   and any framing / state logic that explains why the HCI capture looks
+   the way it does. This is likely to resolve the mapping in an afternoon.
 2. **Fresh pairing capture.** With the controller power-cycled and the
-   phone set to forget the device, one capture documents the bonding
-   handshake.
+   phone set to forget the device, one capture documents the SMP bonding
+   handshake. Orthogonal to the mapping problem but still on #5's list.
 3. **Show-transition capture.** Start a long show (e.g. Peruvian
    Paradise), leave it running for 30 seconds, and look for any
-   controller-emitted indications on `0x000f` in the idle period.
+   controller-emitted indications on `0x000f` in the idle period. If the
+   controller autonomously reports show-frame transitions, PLAN.md
+   Phase 4b (show-scrub) gets a clean timing source.
