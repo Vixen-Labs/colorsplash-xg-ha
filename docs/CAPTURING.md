@@ -6,8 +6,7 @@ document is the step-by-step for producing a usable `btsnoop_hci.log` on
 Android — start to finish, no prior experience assumed.
 
 See [`docs/PLAN.md`](PLAN.md#phase-1--reverse-engineering-7-issues) for
-where this fits in the broader plan, and the [action inventory in
-#5](#appendix--action-inventory) for what to do during the session.
+where this fits in the broader plan, and the [action inventory in #5](#appendix--action-inventory) for what to do during the session.
 
 ## TL;DR (for returning contributors)
 
