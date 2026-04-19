@@ -1,9 +1,12 @@
-# ColorSplash XG BLE protocol (v1.0)
+# ColorSplash XG BLE protocol (v1.1)
 
-**Status:** v1.0 — effect opcode mapping is complete. Derived from four
-HCI snoop captures on 2026-04-19 from a Samsung Galaxy Tab S9 Ultra,
-with the fourth being a deliberate 5-second-gap calibration sweep whose
-every action correlated to exactly one ATT Write with sub-200 ms delta.
+**Status:** v1.1 — cross-verified against the decompiled Android app
+bytecode. Every opcode, UUID, write-type, and handshake claim in this
+document is now confirmed against both (a) four HCI snoop captures on
+2026-04-19 from a Samsung Galaxy Tab S9 Ultra (with a deliberate
+5-second-gap calibration sweep), and (b) the Hermes-bytecode sources
+of `com.jandjelectronics.colorsplashxgcontroller` decompiled with
+`jadx` + `hermes-dec`.
 
 See [`docs/CAPTURING.md`](CAPTURING.md) for how to produce inputs,
 [`tools/decode_sweep.py`](../tools/decode_sweep.py) for the decoder, and
@@ -19,18 +22,38 @@ broader Phase 1 context.
 - The controller accepts exactly one central at a time (per
   `docs/CAPTURING.md` §2.3).
 
+## Android client
+
+The official app (`com.jandjelectronics.colorsplashxgcontroller`) is a
+**React Native** application using **Hermes bytecode** and the
+[`react-native-ble-manager`](https://github.com/innoveit/react-native-ble-manager)
+library. All protocol logic lives in `assets/index.android.bundle`
+inside the APK; the Java side is React Native's standard bridge. Tile
+taps call `BleManager.write(peripheralId, serviceUUID, characteristicUUID, [buttonNumber])`
+which maps to `BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT` and
+issues an ATT Write Request (opcode `0x12`) — matching what the HCI
+capture shows.
+
 ## BLE topology
 
-| Handle | UUID | Role |
-|---|---|---|
-| `0x000d` (service) | `9fdc9c81-fffe-5d88-e511-e55714475f5d` | Vendor command service |
-| `0x000e` (decl) | `0x2803` | Characteristic declaration |
-| `0x000f` (value) | `4cabed4d-3f58-4429-b29c-f9a26205f28e` | **Command + state characteristic** |
-| `0x0010` (CCCD) | `0x2902` | Client Characteristic Configuration for `0x000f` |
+| Handle | UUID | App name | Role |
+|---|---|---|---|
+| `0x000d` (service) | `5d5f4714-57e5-11e5-885d-feff819cdc9f` | `Main` | Vendor command service |
+| `0x000e` (decl) | `0x2803` | — | Characteristic declaration |
+| `0x000f` (value) | `4cabed4d-3f58-4429-b29c-f9a26205f28e` | `ButtonNumber` | **Command + state characteristic** (Write, Indicate) |
+| `0x0010` (CCCD) | `0x2902` | — | Client Characteristic Configuration for `0x000f` |
 
-Both UUIDs are 128-bit vendor UUIDs. Standard Bluetooth SIG services
-(Generic Access `0x1800`, Device Information `0x180a`) are also present
-but carry no project-specific information.
+Both vendor UUIDs are 128-bit and match the app's source exactly. The
+app refers to the service as `Main` and the characteristic as
+`ButtonNumber` — the latter is a strong design hint: the byte value on
+the wire is the index of the tile (button) pressed. Standard Bluetooth
+SIG services (Generic Access `0x1800`, Device Information `0x180a`) are
+present on the controller but the app never reads them.
+
+_Historical note:_ v1.0 of this document listed the service UUID in
+its wire little-endian form (`9fdc9c81-fffe-5d88-e511-e55714475f5d`).
+v1.1 corrects it to the canonical form used by the app and Bluetooth
+SIG conventions. Both strings encode the same 128 bits.
 
 ## Framing
 
@@ -105,6 +128,38 @@ unambiguous — every retransmit carried the same payload.
 | `0x0e` | Return | 30 ms |
 | `0x00` | Standby | write ≈400 ms _before_ SWEEP_LOG entry (user tapped, then typed the label) |
 
+## Authentication / bonding
+
+**None.** The decompiled app contains no pairing or bonding logic —
+no `BluetoothDevice.createBond`, no SMP passkey entry, no Just Works
+confirmation UI. The app discovers, connects, and immediately begins
+GATT operations. Any bonding that happens is transparently handled by
+the Android BT stack using Just-Works / no authentication, and is
+optional: the controller will accept ATT writes whether or not a bond
+exists.
+
+The user's empirical observation that "the Connect flow has no password
+or confirmation" is confirmed at the code level.
+
+## Controller-to-central indications
+
+The app subscribes to indications on `0x000f` during `onServicesDiscovered`
+and implements a handler (`BleManagerDidUpdateValueForCharacteristic`)
+that reads the first byte of each indication value. The handler
+treats:
+
+- `14` (= `0x0e`, `Return`) as an "effect rolled back" event — updates
+  UI to un-highlight Lock/Return toggles.
+- `13` (= `0x0d`, `Lock`) as a "locked" event — highlights Lock on the UI.
+- Anything else (a tile byte) as a "new effect active" event — highlights
+  that tile and un-highlights Lock/Return.
+
+This explains why every write is echoed back by the controller — the
+echo is the **authoritative UI-state signal** from the controller. The
+app does not assume its own write succeeded until it receives the
+echo. This is important for a reference implementation: treat the
+indication as the ack, not the ATT Write Response.
+
 ## Observed behaviors
 
 ### Return is a dedicated opcode (`0x0e`)
@@ -171,18 +226,49 @@ Additional caveats observed:
   filter excludes pre-session and post-session writes based on the
   action timestamps in `SWEEP_LOG.md`.
 
+## Show color gradients (bonus from the decompile)
+
+The app ships the exact RGB gradient each show cycles through,
+embedded as hex color arrays alongside the tile's `id` and `name`.
+This is a gift to PLAN.md Phase 4b (show-scrub color picker) — the
+target color sequence per show is known without needing to
+characterize each show on video first.
+
+| Show | Byte | Gradient hex (from app source) |
+|---|---|---|
+| Nova | `0x07` | `#FEEA00 #71CD2E #02ADF9 #1649D5 #DC0BB3 #FFBF1C #17B63F #00B2E1 #205ADB #CB00A9` |
+| Super Nova | `0x02` | same as Nova |
+| Northern Lights | `0x03` | `#FD3000 #FFC000 #54CD00 #01C2F4 #0E65F7 #FD01AE` |
+| Tidal Wave | `0x04` | 12-step blue-to-cyan gradient `#00A351 … #0675AB` |
+| Patriot Dream | `0x05` | `#E32139 #FFFFFF #398CC6 #E32139 #FFFFFF #398CC6` (red/white/blue, 2× loop) |
+| Desert Skies | `0x06` | 23-step amber → magenta gradient |
+| Peruvian Paradise | `0x01` | 33-step white → magenta → teal gradient |
+
+These are the app's reference colors — what the fixture actually emits
+during playback may differ slightly depending on the controller's DAC
+and the pool light's LED spectrum, but the sequence / relative timing
+is now known. The hex lists are intentionally not reproduced in full
+here to keep this document focused; they live verbatim inside
+`assets/index.android.bundle` of the app.
+
 ## Known unknowns (deferred to later phases)
 
-- **Pairing / bonding handshake bytes.** No SMP exchange was captured —
-  the phone was already bonded in every session. A fresh
-  "forget device → power-cycle controller → re-pair" capture would
-  expose it. Not required for the ESPHome client.
-- **Brightness / speed parameters.** Not observed. The XG app UI does
+- **Brightness / speed parameters.** Not observed in HCI traffic and
+  not emitted by the app's `setPressedButton` path. The XG app UI does
   not expose sliders on this firmware; whether the controller
   nevertheless accepts parameterized writes on `0x000f` (or another
-  handle) is a PLAN.md Phase 4a probe target.
-- **Controller-emitted state telemetry during shows.** CCCD is
-  subscribed to indications, but whether the controller proactively
-  emits state updates during a show cycle (beyond the per-write echo)
-  is not yet tested. It would unlock the show-scrub timing approach in
-  PLAN.md Phase 4b.
+  handle) is a PLAN.md Phase 4a probe target. The decompile rules out
+  any _app-side_ such code path, so Phase 4a will be genuine firmware
+  probing, not just UI bypass.
+- **Show-transition indications.** CCCD is subscribed but the only
+  inbound indications observed are the per-write echoes. Whether the
+  controller proactively emits state updates _during_ a show cycle
+  (e.g. at each color transition) is still not tested. It would
+  unlock the show-scrub timing approach in PLAN.md Phase 4b —
+  preferable to the naive wall-clock timing now that we know the
+  color sequences.
+- **Pairing handshake.** The app issues no pairing and the controller
+  accepts unbonded writes. A fresh "forget device → power-cycle
+  controller" HCI capture would prove whether the controller
+  initiates SMP under any circumstance. Not required for the ESPHome
+  client, which can mirror the app's no-auth behavior.
