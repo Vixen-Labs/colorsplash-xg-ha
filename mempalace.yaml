@@ -1,0 +1,30 @@
+wing: colorsplash_xg_ha
+rooms:
+- name: captures
+  description: Files from captures/
+  keywords:
+  - captures
+  - captures
+- name: firmware
+  description: Files from firmware/
+  keywords:
+  - firmware
+  - firmware
+- name: scripts
+  description: Files from tools/
+  keywords:
+  - scripts
+  - tools
+- name: protocol
+  description: Files from protocol/
+  keywords:
+  - protocol
+  - protocol
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []
