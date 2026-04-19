@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Interactive SWEEP_LOG.md logger for a BLE capture session.
+
+Run from the `captures/` directory:
+
+    ../tools/capture-session                 # default suffix: first-pair
+    ../tools/capture-session steady-state    # custom suffix
+
+Creates `YYYY-MM-DD-<suffix>/SWEEP_LOG.md`, prompts for action lines,
+timestamps each one, and ends on empty input, Ctrl-D, or after 5 minutes.
+Then runs `adb bugreport` and extracts `btsnoop_hci.log` next to the log.
+"""
+
+import select
+import subprocess
+import sys
+import time
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+SESSION_SECONDS = 5 * 60
+
+
+def utc_ts() -> str:
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    suffix = sys.argv[1] if len(sys.argv) > 1 else "first-pair"
+    session_dir = Path(f"{datetime.now().strftime('%Y-%m-%d')}-{suffix}")
+    session_dir.mkdir(exist_ok=True)
+    log_path = session_dir / "SWEEP_LOG.md"
+
+    start_ts = utc_ts()
+    deadline = time.monotonic() + SESSION_SECONDS
+    end_wall_str = datetime.fromtimestamp(
+        time.time() + SESSION_SECONDS
+    ).strftime("%H:%M:%S")
+
+    with log_path.open("w") as f:
+        f.write(f"session_start: {start_ts}\n\n")
+
+    print(f"Logging to {log_path}")
+    print(f"session_start: {start_ts}")
+    print(f"Session ends at ~{end_wall_str} local, or on empty input / Ctrl-D.")
+    print("Type an action line and press Enter.\n")
+
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("\n[5-minute limit reached — ending session]")
+                break
+
+            mins, secs = divmod(int(remaining), 60)
+            sys.stdout.write(f"[{mins}:{secs:02d} left] > ")
+            sys.stdout.flush()
+
+            ready, _, _ = select.select([sys.stdin], [], [], remaining)
+            if not ready:
+                print("\n[5-minute limit reached — ending session]")
+                break
+
+            line = sys.stdin.readline()
+            if line == "":  # EOF (Ctrl-D)
+                print("\n[EOF — ending session]")
+                break
+            if line.strip() == "":
+                print("[empty input — ending session]")
+                break
+
+            entry = f"{utc_ts()}  {line.rstrip()}\n"
+            with log_path.open("a") as f:
+                f.write(entry)
+    except KeyboardInterrupt:
+        print("\n[interrupted — ending session]")
+
+    print("\nPulling bugreport via adb — this takes 30-120 s...")
+    bugreport_zip = session_dir / "bugreport.zip"
+    try:
+        subprocess.run(["adb", "bugreport", str(bugreport_zip)], check=True)
+    except FileNotFoundError:
+        print("adb not found on PATH. Install android-platform-tools and rerun:")
+        print(f"  adb bugreport {bugreport_zip}")
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(f"adb bugreport failed (exit {e.returncode}). "
+              "Is the phone connected with USB debugging authorized?")
+        return e.returncode
+
+    print("\nLocating btsnoop_hci.log in bugreport...")
+    try:
+        with zipfile.ZipFile(bugreport_zip) as zf:
+            matches = [n for n in zf.namelist() if n.endswith("btsnoop_hci.log")]
+    except zipfile.BadZipFile:
+        print(f"{bugreport_zip} is not a valid zip. Inspect manually.")
+        return 1
+
+    if not matches:
+        print("No btsnoop_hci.log inside the bugreport. The HCI snoop logger")
+        print("probably wasn't attached when BT initialized — toggle")
+        print("Developer options → Bluetooth HCI snoop log, then cycle BT off/on,")
+        print("then rerun. See docs/CAPTURING.md §1.2 and §7.")
+        return 1
+
+    # Prefer the first; warn if there are multiple (unusual).
+    chosen = matches[0]
+    if len(matches) > 1:
+        print(f"Multiple snoop logs in bugreport; using {chosen}")
+        print(f"  others: {matches[1:]}")
+    else:
+        print(f"Found at {chosen}")
+
+    subprocess.run(
+        ["unzip", "-j", "-o", str(bugreport_zip), chosen, "-d", str(session_dir)],
+        check=True,
+    )
+
+    print(f"\nDone. Session artifacts in {session_dir}/")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
