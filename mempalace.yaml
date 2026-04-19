@@ -25,6 +25,11 @@ rooms:
   keywords:
   - documentation
   - docs
+- name: feedback
+  description: Durable workflow feedback and corrections — how to behave in this repo
+  keywords:
+  - feedback
+  - memory/feedback
 - name: general
   description: Files that don't fit other rooms
   keywords: []
