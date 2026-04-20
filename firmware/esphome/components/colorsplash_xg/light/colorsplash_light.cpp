@@ -31,14 +31,41 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     this->parent_->send_effect_byte(0x00);
     return;
   }
-  // HA asked for ON. An effect-select path (start()) has already
-  // sent the corresponding byte. If the light is being turned on
-  // with no effect active (e.g. after NVS restore of a bare ON
-  // state), there's nothing sensible to send — the fixture stays
-  // in whatever state it was last in, and the user can pick an
-  // effect to refresh. We deliberately do not fire Return (0x0e)
-  // here: that would replay a "last locked" state the user may not
-  // expect.
+
+  // HA asked for ON. Figure out what byte represents the requested
+  // state:
+  //
+  // 1. If HA has an effect selected, look it up by name and send
+  //    that byte. Also handles the NVS-restore path — LightState
+  //    restores the effect index without calling effect.start(),
+  //    so doing the lookup here guarantees the fixture actually
+  //    comes up in the expected state.
+  // 2. Otherwise (effect == None), resume the most recent visible
+  //    preset we've seen. This covers the "toggle off, toggle on"
+  //    flow where the user expects the fixture to return to what
+  //    it was last showing.
+  // 3. Otherwise, pick Arctic White as a neutral default — better
+  //    than silently doing nothing.
+
+  if (state->get_current_effect_index() != 0) {
+    auto name = state->get_effect_name();
+    // StringRef isn't guaranteed null-terminated — pass the (base,
+    // length) pair explicitly to encode_effect's string_view param.
+    auto byte = encode_effect(std::string_view(name.c_str(), name.size()));
+    if (byte.has_value()) {
+      this->parent_->send_effect_byte(*byte);
+      return;
+    }
+    // Effect name didn't resolve — fall through to the default
+    // path. This should never happen for effects we registered.
+    ESP_LOGW(TAG,
+             "unknown effect name '%.*s', falling back to default",
+             static_cast<int>(name.size()), name.c_str());
+  }
+
+  const auto last_preset = this->parent_->last_preset_byte();
+  uint8_t byte_to_send = last_preset.value_or(0x0b);  // Arctic White
+  this->parent_->send_effect_byte(byte_to_send);
 }
 
 }  // namespace colorsplash_xg

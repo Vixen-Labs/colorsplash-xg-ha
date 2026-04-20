@@ -60,6 +60,13 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
 
+  // Most recent "preset" byte sent — one of the 12 visible effects
+  // (0x01..0x0c). Used by the light entity to decide what to send
+  // when HA requests ON without a selected effect. Not updated for
+  // Standby (0x00), Lock (0x0D), or Return (0x0E) since those don't
+  // correspond to a steady displayed color.
+  optional<uint8_t> last_preset_byte() const { return this->last_preset_byte_; }
+
   // Subscribe to every indication echo from the controller. Invoked
   // from the BLE stack context; downstream code should treat the
   // callback as best-effort and avoid long-running work inside it.
@@ -88,6 +95,9 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   bool write_in_flight_{false};
   std::deque<uint8_t> pending_writes_;
   optional<uint8_t> last_echoed_;
+  optional<uint8_t> last_queued_byte_;
+  uint32_t last_queued_at_ms_{0};
+  optional<uint8_t> last_preset_byte_;
   std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 };
 

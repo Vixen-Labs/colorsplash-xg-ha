@@ -208,6 +208,21 @@ void ColorSplashXG::arm_cccd_() {
 
 void ColorSplashXG::send_effect_byte(uint8_t byte_value) {
   const char *name = decode_byte(byte_value);
+
+  // Drop a same-byte re-request that arrives within 500 ms of the
+  // last queued one. The common cause: both effect.start() and
+  // write_state() fire on a single turn_on, both resolving to the
+  // same byte. Without this, we'd double-send on every effect pick.
+  const uint32_t now = millis();
+  if (this->last_queued_byte_.has_value() &&
+      *this->last_queued_byte_ == byte_value &&
+      now - this->last_queued_at_ms_ < 500) {
+    ESP_LOGD(TAG,
+             "dedup: skipping 0x%02x (%s) — same byte <500 ms ago",
+             byte_value, name ? name : "raw");
+    return;
+  }
+
   ESP_LOGD(TAG,
            "queueing byte 0x%02x (%s)",
            byte_value, name ? name : "raw");
@@ -221,6 +236,14 @@ void ColorSplashXG::send_effect_byte(uint8_t byte_value) {
     this->pending_writes_.pop_front();
   }
   this->pending_writes_.push_back(byte_value);
+  this->last_queued_byte_ = byte_value;
+  this->last_queued_at_ms_ = now;
+  // Track the most recent visible preset so the light entity can
+  // resume it on a bare turn_on. Preset bytes are 0x01..0x0c — the
+  // 5 solids + 7 shows. Standby / Lock / Return don't count.
+  if (byte_value >= 0x01 && byte_value <= 0x0c) {
+    this->last_preset_byte_ = byte_value;
+  }
   this->try_drain_pending_();
 }
 
