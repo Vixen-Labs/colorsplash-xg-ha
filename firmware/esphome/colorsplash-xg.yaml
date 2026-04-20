@@ -21,9 +21,12 @@ esphome:
 esp32:
   board: esp32-s3-devkitc-1
   variant: ESP32S3
-  # N16R8: 16 MB flash. ESPHome defaults to 4 MB for this board, which
-  # wastes 75 % of flash and breaks larger builds. Declare explicitly.
-  flash_size: 16MB
+  # Waveshare ships this board with two module variants — N8R8 (8 MB
+  # flash, 8 MB octal PSRAM) or N16R8 (16 MB / 8 MB). esptool's flash
+  # autodetect on this board reported 8 MB, so we declare N8R8. Running
+  # a mismatched flash_size causes a silent boot failure (partition
+  # table points past end of flash).
+  flash_size: 8MB
   framework:
     type: esp-idf
     version: recommended
@@ -38,6 +41,11 @@ psram:
 logger:
   level: INFO
   baud_rate: 115200
+  # Route logs to the ESP32-S3's built-in USB-JTAG/Serial controller
+  # (the USB-C port labeled "USB" on the Waveshare board), not UART0.
+  # UART0 goes to the CH343 bridge on the "UART1" port — which we
+  # don't use for flashing (it can't reliably upload; see README).
+  hardware_uart: USB_SERIAL_JTAG
 
 api:
   encryption:

@@ -36,23 +36,40 @@ targeting a Waveshare ESP32-S3-Touch-LCD-7 (ESP32-S3-WROOM-1-N16R8,
 
 ## First flash (USB)
 
-The `esphome` CLI on macOS handles this end-to-end.
+The Waveshare board exposes **two USB-C ports** — one labeled `UART1`
+(CH343 bridge) and one labeled `USB` (the ESP32-S3's native
+USB-JTAG/Serial). **Use the `USB` port for flashing.** The `UART1`
+bridge reliably corrupts the esptool protocol stream on this board
+(stub upload fails with checksum errors at every baud rate).
 
-1. Connect the Waveshare board to the Mac via USB-C.
-2. If the board isn't seen by the host OS, hold **BOOT**, tap
-   **RESET**, release **BOOT** to enter ROM bootloader.
-3. Flash + monitor:
+1. Connect USB-C to the port labeled **`USB`** on the board.
+2. Hold **BOOT**, tap **RESET**, release **BOOT** to enter ROM
+   bootloader. A `/dev/cu.usbmodem*` device appears.
+3. Flash:
    ```sh
-   esphome run firmware/esphome/colorsplash-xg.yaml
+   esphome run firmware/esphome/colorsplash-xg.yaml --no-logs
    ```
-   The CLI will compile, flash over USB, then stream the serial log.
+4. **Press the physical RESET button on the board** after the upload
+   finishes. The `Hard resetting via RTS` step esptool performs does
+   not actually reset the chip over native USB-JTAG — without a
+   manual RESET, the board stays in the stub loader and never runs
+   the new firmware.
 
-Expected log output on success (abbreviated):
+After RESET, the board joins Wi-Fi (typically within 10 s) and
+advertises `colorsplash-xg.local` over mDNS. Verify:
+
+```sh
+dns-sd -B _esphomelib._tcp local.        # should list `colorsplash-xg`
+dns-sd -G v4 colorsplash-xg.local         # should resolve to an IP
+nc -zv <ip> 6053                          # HA API port open
 ```
-[I][wifi:...]: Connected to Wi-Fi … IP: 192.168.x.y
-[I][api:...]: Listening on 0.0.0.0:6053
-[I][mdns:...]: Advertising hostname colorsplash-xg.local
-```
+
+### About serial logs
+
+`logger.hardware_uart: USB_SERIAL_JTAG` routes ESPHome's log stream
+out the same `USB` port, so `esphome logs` works without a second
+cable. (The alternative — UART0 over the CH343 port — isn't wired
+the way ESPHome's defaults assume on this board.)
 
 ## Subsequent updates (OTA)
 
