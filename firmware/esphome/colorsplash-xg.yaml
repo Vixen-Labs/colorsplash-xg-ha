@@ -65,3 +65,34 @@ wifi:
 # Captive portal on the fallback AP so a phone can configure Wi-Fi if
 # the primary network is unreachable.
 captive_portal:
+
+# ColorSplash XG custom component (issue #10). Scans for the
+# controller's advertised local name "BGScripr" and auto-connects.
+# Component source lives in ./components/colorsplash_xg/.
+external_components:
+  - source:
+      type: local
+      path: components
+
+esp32_ble_tracker:
+
+colorsplash_xg:
+  id: xg
+  # Optional override for environments with multiple BGScripr
+  # peripherals in range (uncommon). When unset, we match the first
+  # advertiser whose local name equals BGScripr.
+  # mac_address: "AA:BB:CC:DD:EE:FF"
+
+# Debug buttons — prove #10's acceptance criterion without waiting
+# for the #11 light entity. Removed once the light lands.
+button:
+  - platform: template
+    name: "XG Debug: Parisian Blue"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x08);'
+  - platform: template
+    name: "XG Debug: Standby"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x00);'

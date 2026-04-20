@@ -6,13 +6,40 @@ targeting a Waveshare ESP32-S3-Touch-LCD-7 (ESP32-S3-WROOM-1-N16R8,
 
 ## Files
 
-- **`colorsplash-xg.yaml`** — the canonical config. Phase 2 #9 scope:
-  boot, Wi-Fi, Home Assistant API, OTA, captive-portal fallback. No
-  BLE, no display, no LVGL yet.
+- **`colorsplash-xg.yaml`** — the canonical config. Through #10:
+  boot, Wi-Fi, Home Assistant API, OTA, captive-portal fallback,
+  BLE client (auto-discovers the controller). No display or LVGL
+  yet.
+- **`components/colorsplash_xg/`** — external ESPHome component
+  wrapping the single-byte BLE protocol from `docs/PROTOCOL.md`.
+  Self-contained: scans for the controller's advertised local name
+  `BGScripr` and connects. An optional `mac_address:` YAML override
+  disambiguates when multiple BGScripr devices are in range.
 - **`secrets.yaml.example`** — template for the values `!secret` refers
   to in the main config. Copy to `secrets.yaml` (gitignored) and fill
   in real values.
 - **`secrets.yaml`** — gitignored; never commit.
+
+## Controller pairing
+
+No manual pairing needed. The firmware scans continuously for a
+peripheral advertising the local name `BGScripr` (Silicon Labs BT121
+BGScript runtime — that's what the ColorSplash XG controller
+reports). On match it connects, subscribes to indications on the
+vendor command characteristic, and is ready to drive the fixture.
+
+Debug it from Home Assistant → Developer Tools → Logs. You should
+see:
+
+```
+[I][colorsplash_xg:...]: found ColorSplash XG controller at ... (rssi=-??)
+[I][colorsplash_xg:...]: indications enabled — ready to drive fixture
+```
+
+Two HA buttons (`XG Debug: Parisian Blue`, `XG Debug: Standby`)
+exercise the protocol end-to-end — press one and the pool light
+changes. These buttons are removed once the proper `light.pool`
+entity lands in #11.
 
 ## First-time setup
 
