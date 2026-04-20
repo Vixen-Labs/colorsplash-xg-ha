@@ -169,6 +169,8 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
                  "indication echo 0x%02x (%s)",
                  echo,
                  name ? name : "unrecognized opcode");
+        for (auto &cb : this->on_echo_callbacks_)
+          cb(echo);
       }
       break;
     }

@@ -9,6 +9,8 @@
 #include "esphome/core/component.h"
 
 #include <deque>
+#include <functional>
+#include <vector>
 
 namespace esphome {
 namespace colorsplash_xg {
@@ -53,11 +55,17 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
                            esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
 
-  // Public API — used by YAML lambdas and (soon) the light entity
-  // in #11.
+  // Public API — used by YAML lambdas and the light entity in #11.
   void send_effect_byte(uint8_t byte_value);
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
+
+  // Subscribe to every indication echo from the controller. Invoked
+  // from the BLE stack context; downstream code should treat the
+  // callback as best-effort and avoid long-running work inside it.
+  void add_on_echo_callback(std::function<void(uint8_t)> &&cb) {
+    this->on_echo_callbacks_.push_back(std::move(cb));
+  }
 
   // Optional YAML override for environments with multiple BGScripr
   // peripherals in range.
@@ -80,6 +88,7 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   bool write_in_flight_{false};
   std::deque<uint8_t> pending_writes_;
   optional<uint8_t> last_echoed_;
+  std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 };
 
 }  // namespace colorsplash_xg

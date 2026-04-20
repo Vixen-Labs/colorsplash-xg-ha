@@ -83,16 +83,32 @@ colorsplash_xg:
   # advertiser whose local name equals BGScripr.
   # mac_address: "AA:BB:CC:DD:EE:FF"
 
-# Debug buttons — prove #10's acceptance criterion without waiting
-# for the #11 light entity. Removed once the light lands.
+# HA-facing light entity (#11). on/off maps to the controller's
+# Standby byte; the 12 canonical effects (5 solids + 7 shows) are
+# auto-registered by the colorsplash_xg/light platform. Restore
+# to OFF on boot — the fixture's true state isn't readable, so we
+# don't pretend to restore the effect; the user re-selects on use.
+light:
+  - platform: colorsplash_xg
+    colorsplash_xg_id: xg
+    id: pool_light
+    name: "Pool Light"
+    restore_mode: ALWAYS_OFF
+
+# Lock + Return are show-control primitives the XG controller owns
+# (PROTOCOL.md §Observed behaviors). Surfaced as buttons rather than
+# effects because they act on the controller's stored state rather
+# than being alternative display modes.
 button:
   - platform: template
-    name: "XG Debug: Parisian Blue"
+    name: "Pool Lock"
+    icon: "mdi:lock"
     on_press:
       then:
-        - lambda: 'id(xg).send_effect_byte(0x08);'
+        - lambda: 'id(xg).send_effect_byte(0x0d);'
   - platform: template
-    name: "XG Debug: Standby"
+    name: "Pool Return"
+    icon: "mdi:restore"
     on_press:
       then:
-        - lambda: 'id(xg).send_effect_byte(0x00);'
+        - lambda: 'id(xg).send_effect_byte(0x0e);'
