@@ -5,6 +5,10 @@ ColorSplash XG app uses to talk to the LPL-XG-CTRL-1 controller. This
 document is the step-by-step for producing a usable `btsnoop_hci.log` on
 Android — start to finish, no prior experience assumed.
 
+For link-layer questions (connection interval updates, channel hops,
+timing questions) that HCI snoop cannot answer, see §8 for the
+over-the-air capture path using the Adafruit Bluefruit LE Sniffer.
+
 See [`docs/PLAN.md`](PLAN.md#phase-1--reverse-engineering-7-issues) for
 where this fits in the broader plan, and the [action inventory in #5](#appendix--action-inventory) for what to do during the session.
 
@@ -325,10 +329,127 @@ Android HCI snoop captures everything above the HCI boundary —
 commands, events, ACL traffic, SMP pairing messages — but not the raw
 link-layer PDUs (LL control, data channel selection, connection
 parameter updates as they appear on-air). If Phase 1 protocol decode
-turns up a question that requires LL-level visibility (e.g., "exactly
-when does the connection interval update fire?"), reach for the
-nRF52840 sniffer — that's the subject of its own Phase 1 issue. Don't
-chase LL answers in the HCI log; they're not there.
+turns up a question that requires LL-level visibility, reach for the
+over-the-air sniffer covered in §8 below. Don't chase LL answers in
+the HCI log; they're not there.
+
+## 8. Over-the-air capture with the Adafruit Bluefruit LE Sniffer
+
+The project's on-hand over-the-air sniffer is an **Adafruit Bluefruit
+LE Sniffer v2.0** (`nRF51822`-based, FT232R USB-UART bridge). It ships
+pre-flashed with Nordic's legacy nRF Sniffer for Bluetooth LE v2
+firmware. Do not reflash — the device doesn't enumerate over USB DFU
+and reflashing the nRF51 requires a J-Link.
+
+### 8.1 What this adds over HCI
+
+Most protocol decode for Phase 1 was completed from HCI captures (§1–§7)
+plus the APK decompile. The OTA sniffer complements both with:
+
+- **Link-layer visibility** HCI can't expose: `LL_CONNECT_IND` timing,
+  connection interval updates, channel map changes, data channel hops.
+- **A vendor-neutral reference** that bypasses the Samsung Tab S9 Ultra's
+  localtime-as-UTC timestamp quirk (§7 troubleshooting / clock skew).
+- **A starting point for Phase 4b show-scrub timing** if we need to
+  measure when the controller transitions between colors mid-show.
+
+### 8.2 One-time setup
+
+The v2 firmware predates Wireshark's extcap architecture, so there's
+no Nordic plugin for it in modern Wireshark. Use
+Adafruit's Python sniffer client directly; it writes a pcap that
+Wireshark opens after the capture ends.
+
+```sh
+# 1. Clone the Adafruit client (keep outside this repo)
+mkdir -p ~/dev/nrf-sniffer-tools && cd ~/dev/nrf-sniffer-tools
+git clone https://github.com/adafruit/Adafruit_BLESniffer_Python.git
+
+# 2. Create a venv and install deps
+python3 -m venv venv
+./venv/bin/pip install -r Adafruit_BLESniffer_Python/requirements.txt
+```
+
+The client was written for Python 2.7. Four small Python 3 fixes are
+required before it will run on modern macOS:
+
+| File | Fix |
+|---|---|
+| `SnifferAPI/Logger.py` | Change `except AttributeError:` (line 24) to `except (AttributeError, TypeError):` — on macOS, `os.getenv('appdata')` returns `None` rather than raising, so the join now raises `TypeError` instead. |
+| `SnifferAPI/Packet.py` `setup()` (≈line 94) | Replace the bare `self.uart.ser.open` reference with a conditional `if not self.uart.ser.is_open: self.uart.ser.open()`. The missing parens were a silent no-op under Python 2. |
+| `SnifferAPI/UART.py` | In `read()` and `writeList()`, add `if not self.ser.is_open: self.ser.open()` before the I/O call — covers the case where `setup()`'s close/reopen dance leaves the port transiently closed. |
+| `SnifferAPI/SnifferCollector.py` `_continuouslyPipe()` | Handle `None` packets and widen the `except` list to include `UARTPacketError`. Without this, a single malformed SLIP frame crashes the whole reader thread and no further packets are written to the pcap. |
+
+After the patches:
+
+```sh
+./venv/bin/python -u Adafruit_BLESniffer_Python/sniffer.py /dev/cu.usbserial-10
+```
+
+Should print `Scanning for BLE devices (5s) ...` and enumerate nearby
+devices, including **`BGScripr`** when the controller is advertising.
+
+### 8.3 Running an OTA capture session
+
+The client's `sniffer.py` is interactive (scan → pick device → follow).
+For scripted captures, a small wrapper that auto-selects by name is
+convenient but not checked into this repo because it needs to live
+next to the Adafruit client. The wrapper does three things:
+
+1. `Sniffer.Sniffer('/dev/cu.usbserial-10')` + `.start()` + sleep 6 s for firmware boot.
+2. `.scan()` for ~8 s, iterate `sniffer.getDevices().asList()`, find the entry whose `name` contains `BGScripr`, record its address.
+3. `.follow(dev)` and then `time.sleep(capture_duration)` while you drive the app. Copy `Adafruit_BLESniffer_Python/logs/capture.pcap` to `captures/YYYY-MM-DD-nrf-<suffix>/session.pcap` at the end.
+
+Important prerequisites:
+
+- **Close any terminal holding `/dev/cu.usbserial-10`** — only one
+  process can open the serial port.
+- **Start the capture with the phone _disconnected_ from the
+  controller.** The follow command locks on when the sniffer sees an
+  `LL_CONNECT_IND` packet. If the phone is already connected, the
+  sniffer will only see periodic advertisements and won't follow into
+  the connection.
+- **The client writes pcap to a CWD-relative `logs/capture.pcap`.**
+  Run from the Adafruit dir or `os.chdir()` into it from your wrapper,
+  otherwise writes silently fail.
+
+### 8.4 Reading the pcap
+
+The capture file is `DLT_USER_10` (Nordic's proprietary pseudo-header
+format). Wireshark needs its built-in "Nordic BLE Sniffer" dissector
+routed to that link-layer type:
+
+1. Open the pcap in Wireshark.
+2. Edit → Preferences → Protocols → DLT_USER → Encapsulations Table →
+   Add row: DLT = `USER 10`, Payload protocol = `nordic_ble`.
+3. Apply; Wireshark will now decode the packets as BLE. The standard
+   `btle || btatt` filter then works exactly as it does for HCI
+   captures.
+
+For cross-reference with v1.1 PROTOCOL.md: ATT Write Requests to
+handle `0x000f` carry a one-byte value in the range `0x00-0x0e`.
+Every value maps to a UI element per the opcode table.
+
+### 8.5 Known limitations
+
+- **Follow-mode reliability (2026-04-19).** Even after the Python 3
+  patches above, the client sometimes fails to capture the
+  post-`LL_CONNECT_IND` connection traffic — the scan-phase captures
+  work, but the transition to connected-mode capture needs more
+  debugging than this project has budgeted. Worked around by keeping
+  the phone disconnected at capture start and reconnecting during the
+  window; if that doesn't track, the scan-only capture is still useful
+  for studying the controller's advertising behavior.
+- **Wireshark cannot auto-dissect `DLT_USER_10`** without the
+  per-session DLT table entry described in §8.4. Wireshark remembers
+  the setting across restarts once configured.
+- **nRF51 is BLE 4.x-only** (1 Mbps PHY). Fine for this controller —
+  which only uses 1M — but would not help capture BLE 5 2M / Coded PHY
+  peripherals.
+- **Encryption.** If the link were encrypted (this controller's isn't)
+  the sniffer would need the Long-Term Key extracted from an HCI
+  capture of the pairing to decrypt. `docs/CAPTURING.md` §6 privacy
+  notes apply to pcap files equally.
 
 ## Appendix — action inventory
 
