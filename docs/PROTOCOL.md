@@ -1,14 +1,17 @@
-# ColorSplash XG BLE protocol (v1.2)
+# ColorSplash XG BLE protocol (v1.3)
 
-**Status:** v1.2 — cross-verified against (a) four Android HCI snoop
-captures on 2026-04-19 from a Samsung Galaxy Tab S9 Ultra (with a
-deliberate 5-second-gap calibration sweep), (b) the Hermes-bytecode
-sources of `com.jandjelectronics.colorsplashxgcontroller` decompiled
-with `jadx` + `hermes-dec`, and (c) an iOS capture made from an
-iPhone running the official XG app via Apple's PacketLogger. All three
+**Status:** v1.3 — consolidated audit pass (issue #7) against (a)
+four Android HCI snoop captures on 2026-04-19 from a Samsung Galaxy
+Tab S9 Ultra (with a deliberate 5-second-gap calibration sweep),
+(b) the Hermes-bytecode sources of
+`com.jandjelectronics.colorsplashxgcontroller` decompiled with
+`jadx` + `hermes-dec`, and (c) an iOS capture from an iPhone
+running the official XG app via Apple's PacketLogger. All three
 independent sources agree byte-for-byte on service/characteristic
-UUIDs, the 1-byte write framing, and every tile opcode in the table
-below.
+UUIDs, the 1-byte write framing, and every tile opcode in the
+table below. This revision adds an explicit reference-client recipe
+for implementors, consolidates the evidence sources under each major
+technical claim, and makes the firmware-version gap explicit.
 
 See [`docs/CAPTURING.md`](CAPTURING.md) for how to produce inputs,
 [`tools/decode_sweep.py`](../tools/decode_sweep.py) for the decoder, and
@@ -86,6 +89,40 @@ L2CAP framing):
                           │  └─────── ATT opcode 0x12 (Write Request)
                           └ L2CAP CID 0x0004 (ATT)
 ```
+
+## Reference client recipe
+
+This is the minimum sequence a fresh client implementation must
+execute. Every step is backed by the sections below and by the
+captures cited in §Sources of evidence.
+
+1. **Scan** for a peripheral advertising the local name `BGScripr`.
+   The advertising payload also carries the 128-bit service UUID
+   listed in the BLE topology table, so a service-UUID filter works
+   as well — see §BLE topology.
+2. **Connect** to it. No pairing / bonding is required; see
+   §Authentication / bonding.
+3. **Discover services** and locate the command characteristic at
+   UUID `4cabed4d-3f58-4429-b29c-f9a26205f28e`. Its properties are
+   Write + Indicate; see §BLE topology for handle numbers.
+4. **Subscribe to indications** by writing `0x0002` to that
+   characteristic's CCCD descriptor.
+5. **Send commands** by issuing `ATT Write Request` (opcode `0x12`)
+   with a **single-byte** payload drawn from the table in §Effect
+   opcode table. The controller responds with `ATT Write Response`
+   (opcode `0x13`, standard ack) and, shortly after, a
+   `Handle Value Indication` echoing the same byte back on the
+   command characteristic. Treat the **indication echo** as the
+   authoritative "state applied" signal (that's what the official
+   app does — see §Controller-to-central indications). ACK the
+   indication with `Handle Value Confirmation` (opcode `0x1e`).
+6. **Disconnect** when done. Reconnecting preserves the controller's
+   last locked state, so the client does not need to re-apply state
+   on reconnect; see §Reconnect preserves state.
+
+No multi-byte payloads, no length prefix, no checksum, no sequence
+counter, no encryption, no MTU negotiation requirement — a single
+byte on a single characteristic does everything.
 
 ## Effect opcode table
 
@@ -292,8 +329,55 @@ is now known. The hex lists are intentionally not reproduced in full
 here to keep this document focused; they live verbatim inside
 `assets/index.android.bundle` of the app.
 
+## Sources of evidence
+
+Each claim in this document is supported by at least one of the
+following captures or reverse-engineering artifacts. All of them are
+reproducible with the procedures in
+[`docs/CAPTURING.md`](CAPTURING.md).
+
+- **Android HCI snoop captures** (Samsung Galaxy Tab S9 Ultra,
+  2026-04-19) under `captures/2026-04-19-first-pair/`,
+  `-steady-state/`, `-steady-state2/`, and `-steady-state3/`
+  (calibration). Source of the opcode table mapping, the
+  observed behaviors section, the clock-skew gotcha, and every
+  Android-side claim. Decoded with
+  [`tools/decode_sweep.py`](../tools/decode_sweep.py).
+- **Android APK decompile** of
+  `com.jandjelectronics.colorsplashxgcontroller` (React Native /
+  Hermes) via `jadx` + `hermes-dec`. Source of the characteristic's
+  app-side identifier `ButtonNumber`, the service UUID in its
+  canonical form, the authoritative opcode-to-tile mapping
+  (`{id, name}` pairs in the `LIGHTS` array), the absence of
+  pairing code, and the embedded show color gradients. Per
+  issue #3, the APK and decompiled source are _not_ committed to
+  this repo.
+- **iOS PacketLogger capture** (iPhone, 2026-04-19) under
+  `captures/2026-04-19-ios-calibration/session.pcap.log` (btsnoop
+  v1 format despite the `.pcap.log` suffix). Source of the iOS
+  cross-check section — confirmed byte-for-byte identical protocol.
+- **nRF52 over-the-air sniffer capture** (2026-04-19) under
+  `captures/2026-04-19-nrf-validation/session.pcap`. Source of the
+  link-layer confirmation that the phone's ATT Write Requests
+  appear on-air as expected. See `docs/CAPTURING.md` §8 for its
+  packet-loss caveats.
+
+`captures/` is gitignored; these paths are pointers, not commits.
+Each directory contains the raw capture file plus a `SWEEP_LOG.md`
+narrating the user-side action sequence, which is how the behavioral
+claims in §Observed behaviors are correlated to on-wire bytes.
+
 ## Known unknowns (deferred to later phases)
 
+- **Controller firmware revision string.** The DIS characteristic
+  `0x2a26` at handle `0x000c` exists on the controller (services
+  discovery includes the Device Information Service `0x180a`), but
+  the official app never reads it — confirmed by the #3 decompile.
+  No capture currently contains its value. Resolution path: the
+  bleak reference client planned for issue #8 can read this
+  characteristic on connect and record the result here. Knowing the
+  version matters as soon as we start comparing captures across
+  firmware generations.
 - **Brightness / speed parameters.** Not observed in HCI traffic and
   not emitted by the app's `setPressedButton` path. The XG app UI does
   not expose sliders on this firmware; whether the controller
