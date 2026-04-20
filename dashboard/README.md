@@ -20,9 +20,15 @@ in `firmware/esphome/`.
 4. Save.
 
 That's it. The card assumes the default entity IDs the ESPHome
-firmware exposes — if you renamed any entities in HA (e.g.
-`light.pool_light` → `light.backyard_pool`), update the matching
-`entity:` line in your pasted YAML.
+firmware exposes — they all carry the `colorsplash_xg_` prefix
+because HA auto-prepends the device's `friendly_name` to entity IDs
+whose display name doesn't already start with it.
+
+If you renamed the device or any entities in HA (e.g. the light
+to `light.backyard_pool`), update the matching `entity:` line in
+your pasted YAML. You can see the real IDs under
+**Settings → Devices & Services → ColorSplash XG** or in
+**Developer Tools → States** filtered by `pool`.
 
 ## What you get
 
