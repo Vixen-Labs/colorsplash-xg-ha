@@ -285,6 +285,34 @@ via the app. The controller retained its Locked state (cyan) across the
 reconnect without any state-transfer writes from the central. Locked
 state is persistent on the controller, not merely cached on the phone.
 
+### Visual transition latency (controller-side, not BLE)
+
+The wire protocol is fast: the controller's Handle Value Indication
+echoes a write's byte back in ~60 ms (§Controller-to-central
+indications). The **physical fixture's response is not**. After any
+effect-change command, the pool light goes **dark** for a few seconds
+and then re-illuminates in the new state — total visible transition
+can run **5-8 seconds** end to end, observed by the contributor who
+owns the fixture.
+
+Implications for implementors:
+
+- **Do not treat visual darkness as a failure.** The BLE indication
+  echo is the authoritative "command accepted" signal. If the client
+  retries based on "the light went out," it will double-send.
+- **Expect a wall-clock-to-visible-state lag.** Anything that wants
+  to confirm a state applied _in the physical world_ (HA automations,
+  a user's eyes) must tolerate at least 8 seconds of settling time.
+- **Phase 4b show-scrub implications.** Any Hold / Lock issued during
+  the blackout window will miss the intended color — the fixture
+  isn't showing a color during the dark period. Scrub timing must
+  fire **after** the new effect has re-illuminated, not at t=0 from
+  the start-show command.
+- **Bleak reference client test plan.** Automated tests should wait
+  at least 8 s between commands before asserting visible state, or
+  gate on the indication echo and not attempt visual verification
+  from software at all.
+
 ## Clock skew — a capture gotcha
 
 The Samsung Tab S9 Ultra's BT snoop subsystem records timestamps as if
