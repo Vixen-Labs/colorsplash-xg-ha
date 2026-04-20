@@ -1,12 +1,14 @@
-# ColorSplash XG BLE protocol (v1.1)
+# ColorSplash XG BLE protocol (v1.2)
 
-**Status:** v1.1 — cross-verified against the decompiled Android app
-bytecode. Every opcode, UUID, write-type, and handshake claim in this
-document is now confirmed against both (a) four HCI snoop captures on
-2026-04-19 from a Samsung Galaxy Tab S9 Ultra (with a deliberate
-5-second-gap calibration sweep), and (b) the Hermes-bytecode sources
-of `com.jandjelectronics.colorsplashxgcontroller` decompiled with
-`jadx` + `hermes-dec`.
+**Status:** v1.2 — cross-verified against (a) four Android HCI snoop
+captures on 2026-04-19 from a Samsung Galaxy Tab S9 Ultra (with a
+deliberate 5-second-gap calibration sweep), (b) the Hermes-bytecode
+sources of `com.jandjelectronics.colorsplashxgcontroller` decompiled
+with `jadx` + `hermes-dec`, and (c) an iOS capture made from an
+iPhone running the official XG app via Apple's PacketLogger. All three
+independent sources agree byte-for-byte on service/characteristic
+UUIDs, the 1-byte write framing, and every tile opcode in the table
+below.
 
 See [`docs/CAPTURING.md`](CAPTURING.md) for how to produce inputs,
 [`tools/decode_sweep.py`](../tools/decode_sweep.py) for the decoder, and
@@ -127,6 +129,45 @@ unambiguous — every retransmit carried the same payload.
 | `0x0d` | Lock | 106 ms |
 | `0x0e` | Return | 30 ms |
 | `0x00` | Standby | write ≈400 ms _before_ SWEEP_LOG entry (user tapped, then typed the label) |
+
+## iOS cross-check (2026-04-19)
+
+The opcode table above was originally derived from Android HCI captures
+and cross-checked against the decompiled Android app. To rule out
+any platform-gated divergence — e.g. an iOS-only framing byte, a
+different characteristic UUID, or a platform-specific pairing
+sequence — we captured the same sweep from an iPhone running the
+iOS version of the XG app, using Apple's PacketLogger (see
+[`docs/CAPTURING.md`](CAPTURING.md) §9).
+
+**Result: identical protocol.** Five taps in the order
+Parisian Blue → Nova → Lock → Return → Standby produced exactly five
+`ATT Write Request` packets to handle `0x000f`:
+
+| Expected (v1.1 table) | iOS captured |
+|---|---|
+| `0x08` Parisian Blue | `0x08` |
+| `0x07` Nova | `0x07` |
+| `0x0d` Lock | `0x0d` |
+| `0x0e` Return | `0x0e` |
+| `0x00` Standby | `0x00` |
+
+Same two 128-bit UUIDs
+(`5d5f4714-57e5-11e5-885d-feff819cdc9f` service,
+`4cabed4d-3f58-4429-b29c-f9a26205f28e` characteristic). Same
+Write Request opcode (`0x12`). Same 1-byte value framing. Same
+`Handle Value Indication` echo confirmation pattern.
+
+One small incidental observation: iOS-side MTU exchange settles at
+**23 bytes** (BLE minimum). That is a _controller-side_ cap — iOS
+CoreBluetooth's request for a larger MTU is refused by the firmware.
+Android HCI captures show the same cap. Neither platform needs a
+higher MTU since every command fits in a single byte of ATT value.
+
+No platform-gated behaviors were observed; the iOS app is a React
+Native / Hermes build of the same JS codebase confirmed in the #3
+decompile. Identical wire protocol is the expected outcome and is
+now empirically confirmed.
 
 ## Authentication / bonding
 
