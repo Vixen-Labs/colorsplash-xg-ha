@@ -69,3 +69,39 @@ disable.
 
 Works on macOS (confirmed). Linux support via BlueZ is expected but
 not yet verified on this project.
+
+## `measure_latency_live.py`
+
+Real-time fixture transition latency measurement using the Mac's
+built-in camera (or another cv2 camera index) while a bleak sequence
+runs against the controller. Prints per-command onset / nadir / return
+/ total-transition seconds live, then a summary table.
+
+```sh
+# single-pass full sweep (~5 min, camera must see the fixture)
+python tools/measure_latency_live.py --sequence sweep
+
+# short custom sequence
+python tools/measure_latency_live.py --sequence "blue,red,standby" --window 15
+```
+
+First run on macOS needs Camera permission for the shell / IDE hosting
+the Python process (System Settings → Privacy & Security → Camera).
+
+Requires `opencv-python` and `numpy` in the venv in addition to the
+base `requirements.txt` (install with `pip install opencv-python numpy`).
+
+## `measure_latency.py`
+
+Post-hoc analysis of a separately-recorded video (e.g. a QuickTime
+`.mov` of a sweep). Reads a companion `sweep.log` from `tools/cli.py`,
+auto-syncs the video's timeline against the log's wall-clock anchor,
+and emits the same per-command breakdown as the live tool.
+
+```sh
+python tools/measure_latency.py captures/YYYY-MM-DD-latency/
+```
+
+Useful when the camera can't be running during capture (e.g., you used
+QuickTime recording via phone or another Mac and brought the file back
+later). Same opencv-python + numpy dependency as `measure_latency_live.py`.
