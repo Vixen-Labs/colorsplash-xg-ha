@@ -292,8 +292,11 @@ echoes a write's byte back in ~60 ms (§Controller-to-central
 indications). The **physical fixture's response is not**. After any
 effect-change command, the pool light goes **dark** for a few seconds
 and then re-illuminates in the new state — total visible transition
-can run **5-8 seconds** end to end, observed by the contributor who
-owns the fixture.
+is **in the rough 5-8 second range** per contributor observation.
+That figure is an **estimate**, not a measurement; precise timing
+(and whether it varies by effect, prior state, or firmware mood)
+is a prerequisite for Phase 4b scrub work and is listed under
+§Known unknowns.
 
 Implications for implementors:
 
@@ -397,6 +400,17 @@ claims in §Observed behaviors are correlated to on-wire bytes.
 
 ## Known unknowns (deferred to later phases)
 
+- **Precise visual-transition latency.** The 5-8 s range in
+  §Observed behaviors → Visual transition latency is a contributor
+  estimate, not a measurement. We don't yet know whether the
+  transition window is constant, varies by destination effect
+  (shows vs. solid colors), depends on prior state, or differs
+  between cold-start and running. Phase 4b show-scrub timing needs
+  a reliable number here, ideally captured with a video frame
+  analysis or a photodiode (see PLAN.md Phase 4b). The bleak
+  reference client in #8 can at least bound the measurement by
+  timestamping its sent writes against a clock synchronized with
+  whatever sensor does the visual timing.
 - **Controller firmware revision string.** The DIS characteristic
   `0x2a26` at handle `0x000c` exists on the controller (services
   discovery includes the Device Information Service `0x180a`), but
