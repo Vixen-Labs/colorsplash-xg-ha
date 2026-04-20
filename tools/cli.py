@@ -338,6 +338,10 @@ async def _cmd_effect(args: argparse.Namespace) -> int:
     try:
         queue = await _subscribe(client)
         await _write_and_wait_echo(client, byte, args.ack_timeout, queue)
+        if args.hold > 0:
+            _log("ble.hold.start", seconds=args.hold)
+            await asyncio.sleep(args.hold)
+            _log("ble.hold.done", seconds=args.hold)
     finally:
         await client.disconnect()
     return 0
@@ -366,6 +370,11 @@ async def _cmd_sweep(args: argparse.Namespace) -> int:
         # Tail: Standby so the fixture ends in a known off state.
         r = await _write_and_wait_echo(client, EFFECT_TABLE["standby"], args.ack_timeout, queue)
         results.append(r)
+        # Hold the connection so the final Standby's visual transition completes.
+        if args.hold > 0:
+            _log("ble.hold.start", seconds=args.hold)
+            await asyncio.sleep(args.hold)
+            _log("ble.hold.done", seconds=args.hold)
         _log("sweep.done", n_written=len(results))
     finally:
         await client.disconnect()
@@ -404,6 +413,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="indication-echo wait (default: 2)")
     p.add_argument("--inter-cmd", type=float, default=5.0,
                    help="--sweep inter-command delay (default: 5 s — leave \u22655s for fixture transition)")
+    p.add_argument("--hold", type=float, default=8.0,
+                   help="after writing, keep the BLE connection open for N seconds before disconnecting. The fixture's visible transition requires the link to stay alive (5-8 s, see PROTOCOL.md). Default 8 s covers the upper bound. Pass --hold 0 to disconnect immediately (will likely kill the transition).")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 

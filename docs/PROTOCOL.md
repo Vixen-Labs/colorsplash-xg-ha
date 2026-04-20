@@ -1,17 +1,23 @@
-# ColorSplash XG BLE protocol (v1.3)
+# ColorSplash XG BLE protocol (v1.4)
 
-**Status:** v1.3 — consolidated audit pass (issue #7) against (a)
-four Android HCI snoop captures on 2026-04-19 from a Samsung Galaxy
-Tab S9 Ultra (with a deliberate 5-second-gap calibration sweep),
-(b) the Hermes-bytecode sources of
-`com.jandjelectronics.colorsplashxgcontroller` decompiled with
-`jadx` + `hermes-dec`, and (c) an iOS capture from an iPhone
-running the official XG app via Apple's PacketLogger. All three
-independent sources agree byte-for-byte on service/characteristic
-UUIDs, the 1-byte write framing, and every tile opcode in the
-table below. This revision adds an explicit reference-client recipe
-for implementors, consolidates the evidence sources under each major
-technical claim, and makes the firmware-version gap explicit.
+**Status:** v1.4 — adds a client-implementation requirement that
+v1.3's audit missed: the BLE connection must stay open through the
+fixture's visual transition window, not just long enough to receive
+the indication echo. Discovered during issue #8's bleak reference
+client work. Also incorporates Device Information Service findings
+from the first Python connection: the controller exposes Manufacturer
+("Silicon Labs") and Model ("BT121") strings but has no Firmware
+Revision characteristic — closing the v1.3 Known unknown in the
+negative.
+
+Prior cross-verification sources stand: (a) four Android HCI snoop
+captures on 2026-04-19 from a Samsung Galaxy Tab S9 Ultra (with a
+deliberate 5-second-gap calibration sweep), (b) the Hermes-bytecode
+sources of `com.jandjelectronics.colorsplashxgcontroller` decompiled
+with `jadx` + `hermes-dec`, (c) an iOS capture from an iPhone running
+the official XG app via Apple's PacketLogger, and now (d) a working
+Python reference client (`tools/cli.py` via `bleak`) validated against
+the real controller.
 
 See [`docs/CAPTURING.md`](CAPTURING.md) for how to produce inputs,
 [`tools/decode_sweep.py`](../tools/decode_sweep.py) for the decoder, and
@@ -20,8 +26,10 @@ broader Phase 1 context.
 
 ## Controller hardware
 
-- Advertised local name: **`BGScripr`** (Silicon Labs BGScript runtime —
-  the same engine used in Silicon Labs' EFR32/BGM reference BLE stacks).
+- Advertised local name: **`BGScripr`** (Silicon Labs BGScript runtime).
+- DIS Manufacturer: **`Silicon Labs`**.
+- DIS Model: **`BT121`** — a Silicon Labs Bluetooth Smart module
+  running BGScript firmware. BLE 4.2, 1 Mbps PHY only.
 - BD_ADDR OUI prefix: **SiliconLabor (`00:0b:57`)** — public identity
   address block assigned to Silicon Laboratories.
 - The controller accepts exactly one central at a time (per
@@ -116,13 +124,21 @@ captures cited in §Sources of evidence.
    authoritative "state applied" signal (that's what the official
    app does — see §Controller-to-central indications). ACK the
    indication with `Handle Value Confirmation` (opcode `0x1e`).
-6. **Disconnect** when done. Reconnecting preserves the controller's
+6. **Hold the connection open ≥ 8 seconds after the write** before
+   disconnecting. The controller echoes its indication in ~60 ms but
+   the fixture's visible transition requires the BLE link to stay
+   alive for the full window or the transition aborts. See
+   §The BLE link must stay open through the visual transition.
+7. **Disconnect** when done. Reconnecting preserves the controller's
    last locked state, so the client does not need to re-apply state
    on reconnect; see §Reconnect preserves state.
 
 No multi-byte payloads, no length prefix, no checksum, no sequence
 counter, no encryption, no MTU negotiation requirement — a single
 byte on a single characteristic does everything.
+
+A working Python implementation of this recipe lives in
+[`tools/cli.py`](../tools/cli.py) (`bleak`-based).
 
 ## Effect opcode table
 
@@ -285,6 +301,41 @@ via the app. The controller retained its Locked state (cyan) across the
 reconnect without any state-transfer writes from the central. Locked
 state is persistent on the controller, not merely cached on the phone.
 
+### The BLE link must stay open through the visual transition
+
+**This is the single most important behavioral constraint for a
+client implementation** and is _not_ inferrable from HCI captures of
+the official apps, because those apps stay continuously connected for
+the entire user session and therefore never exercise the edge case.
+
+Discovered during #8's bleak client work: if the central writes a
+command byte and disconnects promptly (say, within 1 second), the
+controller accepts the write and echoes the Handle Value Indication
+in the usual ~60 ms — but the fixture's visible transition is
+aborted. The fixture goes dark at the start of the transition and
+stays dark; no new color illuminates. Subsequent connect+write pairs
+can compound this: the controller ends up in a partially-resolved
+state that may or may not honor the next command visually, and when
+the client finally keeps the connection open long enough, the fixture
+may land on a byte value from an earlier confused write rather than
+the latest one.
+
+Empirical fix: hold the BLE connection open for **at least 8 seconds
+after the write** (covering the §Visual transition latency upper
+bound). The `tools/cli.py` reference client defaults `--hold 8` and
+that reliably produces the correct visual state change.
+
+Implications for implementors:
+
+- **Fire-and-disconnect patterns don't work.** Don't write and
+  immediately call `disconnect()`.
+- **Long-lived sessions are the happy path.** An ESPHome `ble_client`
+  that keeps the connection open indefinitely (reconnecting on drop)
+  matches the official apps' model and avoids this entirely.
+- **If you're building a CLI or script that reconnects per-command,
+  add at least an 8-second post-write hold.** The Python reference
+  client does this by default.
+
 ### Visual transition latency (controller-side, not BLE)
 
 The wire protocol is fast: the controller's Handle Value Indication
@@ -411,15 +462,18 @@ claims in §Observed behaviors are correlated to on-wire bytes.
   reference client in #8 can at least bound the measurement by
   timestamping its sent writes against a clock synchronized with
   whatever sensor does the visual timing.
-- **Controller firmware revision string.** The DIS characteristic
-  `0x2a26` at handle `0x000c` exists on the controller (services
-  discovery includes the Device Information Service `0x180a`), but
-  the official app never reads it — confirmed by the #3 decompile.
-  No capture currently contains its value. Resolution path: the
-  bleak reference client planned for issue #8 can read this
-  characteristic on connect and record the result here. Knowing the
-  version matters as soon as we start comparing captures across
-  firmware generations.
+- **Controller firmware revision string.** _Resolved 2026-04-19_:
+  the controller **does not expose** a Firmware Revision String
+  characteristic (UUID `0x2a26`) at all. The bleak client in #8 reads
+  its Device Information Service and finds only:
+  - Manufacturer Name String (`0x2a29`): `"Silicon Labs"`
+  - Model Number String (`0x2a24`): `"BT121"`
+  Serial Number, Hardware Revision, Firmware Revision chars are all
+  absent. BT121 is a Silicon Labs Bluetooth Smart module running a
+  BGScript application, which matches the advertised `"BGScripr"`
+  local name. No firmware version is surfaced over BLE; identifying
+  a specific firmware build would require asking J&J Electronics
+  directly or physically accessing the module's debug interface.
 - **Brightness / speed parameters.** Not observed in HCI traffic and
   not emitted by the app's `setPressedButton` path. The XG app UI does
   not expose sliders on this firmware; whether the controller
