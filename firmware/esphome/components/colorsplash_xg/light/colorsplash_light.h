@@ -40,22 +40,14 @@ class ColorSplashPresetEffect : public light::LightEffect {
   ColorSplashXG *parent_;
 };
 
-struct SolidPreset {
-  const char *name;
-  uint8_t byte;
-  float r;  // 0..1
-  float g;
-  float b;
-};
-
 class ColorSplashLightOutput : public light::LightOutput {
  public:
   light::LightTraits get_traits() override {
     light::LightTraits traits;
-    // RGB + ON_OFF: HA's color picker drives the 5 solid presets
-    // via nearest-neighbor snap; plain on/off still works.
-    traits.set_supported_color_modes(
-        {light::ColorMode::ON_OFF, light::ColorMode::RGB});
+    // ON_OFF only — HA shouldn't show a brightness slider or color
+    // picker, because the fixture supports neither. The 5 solid
+    // colors are exposed as button entities in YAML.
+    traits.set_supported_color_modes({light::ColorMode::ON_OFF});
     return traits;
   }
 
@@ -63,28 +55,8 @@ class ColorSplashLightOutput : public light::LightOutput {
 
   void set_parent(ColorSplashXG *parent) { this->parent_ = parent; }
 
-  // Called from Python codegen, once per solid color in SOLID_COLORS.
-  // r, g, b arrive as uint8 0..255; we store as 0..1 floats to
-  // match ESPHome's internal LightColorValues format.
-  void register_solid(const char *name, uint8_t byte,
-                      uint8_t r, uint8_t g, uint8_t b) {
-    this->solids_.push_back(SolidPreset{
-        name,
-        byte,
-        r / 255.0f,
-        g / 255.0f,
-        b / 255.0f,
-    });
-  }
-
  protected:
-  // Return the solid preset byte whose RGB is closest to (r,g,b)
-  // in plain Euclidean color space. Returns empty if the preset
-  // table was never populated (should not happen after codegen).
-  optional<uint8_t> nearest_solid_byte_(float r, float g, float b) const;
-
   ColorSplashXG *parent_{nullptr};
-  std::vector<SolidPreset> solids_;
 };
 
 }  // namespace colorsplash_xg

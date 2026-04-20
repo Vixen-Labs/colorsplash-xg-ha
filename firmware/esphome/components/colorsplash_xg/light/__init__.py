@@ -1,10 +1,10 @@
 """ESPHome light platform for the ColorSplash XG pool-light bridge.
 
-Exposes a binary (on/off) light entity whose effects cover the 12
-canonical presets the controller speaks (5 solid colors + 7 shows).
-Lock (0x0D), Return (0x0E), and Standby (0x00) are deliberately
-omitted — Standby is the OFF semantic, Lock/Return are surfaced as
-separate button entities.
+Exposes a binary (on/off) light entity whose effects cover only
+the 7 show animations the controller speaks. The 5 solid colors
+and the Lock/Return controls surface as button entities defined
+in YAML — HA's light-entity color picker can't be constrained to
+the fixture's exact palette, so buttons give a cleaner 1:1 mapping.
 """
 
 import esphome.codegen as cg
@@ -40,10 +40,14 @@ ColorSplashPresetEffect = colorsplash_xg_ns.class_(
 # fixture's actual emission may differ slightly due to LED spectrum
 # and the controller's DAC; these values are what HA displays.
 
-# The fixture emits pure saturated primaries — per user observation,
-# there's no nuance. "Miami Pink" is pure magenta, not salmon; the
-# colors map cleanly to the 6 RGB vertices/faces. Arctic White is
-# full-white.
+# Reference table of the 5 solid colors. Not used by the light
+# platform itself (the 5 solids are exposed as button entities in
+# YAML, not effects); kept here as single-source-of-truth
+# documentation and for the cross-check test.
+#
+# The fixture emits pure saturated primaries (user-observed
+# 2026-04-20) — red #FF0000, green #00FF00, blue #0000FF, white
+# #FFFFFF, magenta #FF00FF.
 SOLID_COLORS: list[tuple[str, int, tuple[int, int, int]]] = [
     ("Parisian Blue",      0x08, (0x00, 0x00, 0xFF)),
     ("Brazilian Red",      0x0A, (0xFF, 0x00, 0x00)),
@@ -78,12 +82,6 @@ async def to_code(config):
 
     parent = await cg.get_variable(config[CONF_COLORSPLASH_XG_ID])
     cg.add(var.set_parent(parent))
-
-    # Register each solid color's (byte, r, g, b). The light's
-    # write_state uses this table to snap HA's requested RGB to the
-    # nearest preset when HA calls turn_on with a color.
-    for name, byte, (r, g, b) in SOLID_COLORS:
-        cg.add(var.register_solid(name, byte, r, g, b))
 
     # Build the 7 show effects in codegen and pass them all to
     # LightState::add_effects in a single call. LightState's

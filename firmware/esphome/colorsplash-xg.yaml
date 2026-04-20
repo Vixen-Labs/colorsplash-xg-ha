@@ -95,11 +95,48 @@ light:
     name: "Pool Light"
     restore_mode: ALWAYS_OFF
 
-# Lock + Return are show-control primitives the XG controller owns
-# (PROTOCOL.md §Observed behaviors). Surfaced as buttons rather than
-# effects because they act on the controller's stored state rather
-# than being alternative display modes.
+# The 5 solid colors and the 2 show-control primitives (Lock,
+# Return) are all exposed as button entities. HA light entities
+# can't constrain their color picker to a discrete palette, so
+# buttons give a 1:1 mapping to the fixture's real presets and
+# avoid the impedance mismatch of HA's 8-swatch default palette
+# being shown for a light with only 5 colors. The dashboard card
+# groups these together visually.
 button:
+  # Solid colors — send the effect byte directly.
+  - platform: template
+    name: "Pool Parisian Blue"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x08);'
+  - platform: template
+    name: "Pool Brazilian Red"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0a);'
+  - platform: template
+    name: "Pool Arctic White"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0b);'
+  - platform: template
+    name: "Pool Miami Pink"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0c);'
+  - platform: template
+    name: "Pool New Zealand Green"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x09);'
+  # Show-control primitives — act on the controller's internal
+  # "last locked" slot. Lock captures current displayed color;
+  # Return replays it.
   - platform: template
     name: "Pool Lock"
     icon: "mdi:lock"
