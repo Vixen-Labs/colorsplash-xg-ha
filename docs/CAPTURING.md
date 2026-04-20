@@ -451,6 +451,90 @@ Every value maps to a UI element per the opcode table.
   capture of the pairing to decrypt. `docs/CAPTURING.md` §6 privacy
   notes apply to pcap files equally.
 
+## 9. iOS capture via Apple PacketLogger
+
+To cross-check the Android-derived protocol against the iOS XG app
+(issue #6), use Apple's **PacketLogger**. It attaches to a USB-connected
+iPhone/iPad that has the **Bluetooth Debug Profile** installed, and
+writes a btsnoop-format capture that `tshark` and
+[`tools/decode_sweep.py`](../tools/decode_sweep.py) can read directly.
+
+### 9.1 What this adds over the Android HCI capture
+
+- **Ground-truth comparison** against the Android protocol findings —
+  confirms or refutes any platform-specific behavior.
+- A path to capture from an **iOS device that can't run `adb`**. The
+  same btsnoop format drops right into the existing decoder.
+
+### 9.2 One-time setup
+
+1. **Install PacketLogger.** Sign in at
+   [developer.apple.com/download/all/](https://developer.apple.com/download/all/)
+   with your Apple ID (free developer account works), download
+   **"Additional Tools for Xcode"** matching your installed Xcode
+   version, mount the DMG, and drag `Hardware/PacketLogger.app` into
+   `/Applications`. Launch once to clear macOS Gatekeeper.
+2. **Install the Bluetooth Debug Profile on the iOS device.** As of
+   late 2025 / early 2026 this profile lives on Apple's Feedback
+   Assistant profiles page:
+   [developer.apple.com/feedback-assistant/profiles-and-logs/](https://developer.apple.com/feedback-assistant/profiles-and-logs/).
+   Download the `.mobileconfig` to the phone (AirDrop or Safari on
+   device), install via Settings → General → VPN & Device
+   Management, and **reboot the phone** for the profile to take
+   effect.
+3. **Connect the phone to the Mac via USB.** Unlock the phone,
+   approve the "Trust This Computer?" prompt if it appears. Verify
+   the phone enumerates with `xcrun xctrace list devices`.
+
+### 9.3 Running an iOS capture session
+
+Modern PacketLogger (Xcode 26+) auto-opens a live capture against the
+connected iOS device when you launch the app — the window title shows
+`Untitled [Live] - <device name>`.
+
+1. Make sure the XG app is disconnected from the controller (app
+   closed or on the "Select device" sheet).
+2. In PacketLogger: ⌘K (Edit → Clear All) to flush the startup
+   buffer.
+3. On the iPhone: open the XG app, Connect → Connect to XG Controller,
+   then tap a deliberate sweep (e.g. one color, one show, Lock,
+   Return, Standby) with 3–5 second pauses to make correlation
+   trivial.
+4. In PacketLogger: click **Pause** or close the live window to stop.
+5. **File → Save As** → `captures/YYYY-MM-DD-ios-<suffix>/session.pklg`
+   (PacketLogger's native format).
+6. **File → Export** — recent PacketLogger emits a
+   `session.pcap.log` that is actually a **btsnoop v1** file (same
+   encapsulation as Android's `btsnoop_hci.log`). That's the file
+   you analyze with `tshark`.
+
+### 9.4 Reading the pcap
+
+```sh
+# Extract all ATT Write Requests to handle 0x000f
+/Applications/Wireshark.app/Contents/MacOS/tshark \
+  -r captures/YYYY-MM-DD-ios-<suffix>/session.pcap.log \
+  -Y 'btatt.opcode == 0x12 and btatt.handle == 0x000f' \
+  -T fields -e frame.time_epoch -e btatt.value
+```
+
+Each write row is `<epoch>\t<byte-hex>` and maps to the opcode table
+in [`docs/PROTOCOL.md`](PROTOCOL.md). Because the file is btsnoop
+format, `tools/decode_sweep.py` also works on it directly — point the
+tool at the session directory and it correlates writes against a
+SWEEP_LOG.md the same way as for Android captures.
+
+### 9.5 Notes
+
+- The `.pklg` PacketLogger-native file is kept alongside the btsnoop
+  export for future reference (Apple has their own dissector). Both
+  are gitignored (`captures/*` plus `*.pklg` in `.gitignore`).
+- Clock skew of the Samsung tablet (§8's quirk) does **not** apply
+  to iOS — PacketLogger timestamps are genuine UTC. `decode_sweep.py`'s
+  auto-skew will see ~0 s offset and skip correction.
+- No SMP pairing is observed on iOS either, matching Android and the
+  app decompile's finding of no bonding code.
+
 ## Appendix — action inventory
 
 The exact list of actions a capture session must exercise lives in
