@@ -353,6 +353,13 @@ async def _cmd_effect(args: argparse.Namespace) -> int:
     client, addr = await _connect(args.address, args.timeout)
     try:
         await _apply_settle(args)
+        if getattr(args, "read_first", False):
+            try:
+                pre = await client.read_gatt_char(COMMAND_CHAR_UUID)
+                _log("ble.read_first", value=pre.hex() if pre else "empty",
+                     n_bytes=len(pre) if pre else 0)
+            except Exception as exc:
+                _log("ble.read_first.error", err=str(exc))
         if getattr(args, "no_subscribe", False):
             t0 = time.monotonic()
             await client.write_gatt_char(COMMAND_CHAR_UUID, bytes([byte]), response=True)
@@ -362,6 +369,11 @@ async def _cmd_effect(args: argparse.Namespace) -> int:
                  write_ms=int((time.monotonic() - t0) * 1000))
         else:
             queue = await _subscribe(client)
+            post_sub = float(getattr(args, "post_subscribe_delay", 0.0) or 0.0)
+            if post_sub > 0:
+                _log("ble.post_subscribe_delay.start", seconds=post_sub)
+                await asyncio.sleep(post_sub)
+                _log("ble.post_subscribe_delay.done", seconds=post_sub)
             await _write_and_wait_echo(client, byte, args.ack_timeout, queue)
         if args.hold > 0:
             _log("ble.hold.start", seconds=args.hold)
@@ -464,6 +476,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="sleep N seconds between connect and the first BLE operation. Useful for investigating the first-command-after-idle Nova quirk (issue #33). Default 0 (no delay).")
     p.add_argument("--no-subscribe", action="store_true", dest="no_subscribe",
                    help="skip the CCCD subscribe (start_notify). Writes still happen but indication echoes aren't observed. Diagnostic for issue #33.")
+    p.add_argument("--read-first", action="store_true", dest="read_first",
+                   help="read the command characteristic before writing. Tests hypothesis H4a for issue #33 (controller may need a read to establish state context).")
+    p.add_argument("--post-subscribe-delay", type=float, default=0.0,
+                   dest="post_subscribe_delay",
+                   help="sleep N seconds between CCCD subscribe and the first write. Diagnostic flag for issue #33.")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
