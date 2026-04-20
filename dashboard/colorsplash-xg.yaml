@@ -1,0 +1,80 @@
+# ColorSplash XG dashboard card — stock-Lovelace version.
+#
+# Paste this into a Lovelace dashboard (or a subview) to get a
+# cohesive pool-control surface using only HA's built-in card
+# types. No custom resources required.
+#
+# Entities expected (the prefix `colorsplash_xg_` comes from the
+# ESPHome device's `friendly_name` — HA auto-prepends it unless the
+# entity name starts with the device name):
+#
+#   light.colorsplash_xg_pool_light                   on/off + 7 shows
+#   button.colorsplash_xg_pool_parisian_blue          solid 0x08
+#   button.colorsplash_xg_pool_brazilian_red          solid 0x0A
+#   button.colorsplash_xg_pool_arctic_white           solid 0x0B
+#   button.colorsplash_xg_pool_miami_pink             solid 0x0C
+#   button.colorsplash_xg_pool_new_zealand_green      solid 0x09
+#   button.colorsplash_xg_pool_return                 0x0E (replays)
+#   button.colorsplash_xg_pool_lock                   0x0D (captures)
+#
+# If you renamed the device or entities in HA, update the matching
+# `entity:` lines below to the real IDs you see under
+# Settings → Devices & Services → ColorSplash XG.
+
+type: vertical-stack
+cards:
+  # Master on/off + the 7 show effects via HA's standard light card.
+  # Brightness slider and color picker stay hidden because the
+  # firmware declares ON_OFF color mode only.
+  - type: light
+    entity: light.colorsplash_xg_pool_light
+    name: Pool Light
+
+  # 3×2 grid: 5 solid colors + Return.
+  # Tile cards render the entity's icon on a colored accent; tapping
+  # a tile calls button.press on the bound entity (default action
+  # for button entities).
+  - type: grid
+    columns: 3
+    square: false
+    cards:
+      - type: tile
+        entity: button.colorsplash_xg_pool_parisian_blue
+        name: Parisian Blue
+        color: blue
+        icon: mdi:circle
+      - type: tile
+        entity: button.colorsplash_xg_pool_brazilian_red
+        name: Brazilian Red
+        color: red
+        icon: mdi:circle
+      - type: tile
+        entity: button.colorsplash_xg_pool_arctic_white
+        name: Arctic White
+        color: white
+        icon: mdi:circle
+      - type: tile
+        entity: button.colorsplash_xg_pool_miami_pink
+        name: Miami Pink
+        color: pink
+        icon: mdi:circle
+      - type: tile
+        entity: button.colorsplash_xg_pool_new_zealand_green
+        name: New Zealand Green
+        color: green
+        icon: mdi:circle
+      - type: tile
+        entity: button.colorsplash_xg_pool_return
+        name: Return
+        color: grey
+        icon: mdi:restore
+
+  # Lock stands alone at the bottom — it captures the current
+  # displayed color into the controller's "last locked" slot for
+  # Return to replay later. Visually distinct from the color
+  # selectors so the function stays obvious.
+  - type: tile
+    entity: button.colorsplash_xg_pool_lock
+    name: Lock
+    color: amber
+    icon: mdi:lock
