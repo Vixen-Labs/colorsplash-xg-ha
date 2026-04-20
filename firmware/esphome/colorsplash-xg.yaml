@@ -1,0 +1,67 @@
+---
+# ColorSplash XG → ESPHome bridge, running on a Waveshare
+# ESP32-S3-Touch-LCD-7 (ESP32-S3-WROOM-1-N16R8 module: 16 MB flash, 8 MB
+# octal PSRAM).
+#
+# This is the Phase 2 #9 scaffolding config — boot + Wi-Fi + HA API +
+# OTA only. No BLE (that's #10), no display (that's #14), no LVGL
+# (Phase 3). Stable foundation for everything that follows.
+#
+# See firmware/esphome/README.md for setup and flashing steps.
+
+substitutions:
+  device_name: colorsplash-xg
+  friendly_name: ColorSplash XG
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: ESP32S3
+  # Waveshare ships this board with two module variants — N8R8 (8 MB
+  # flash, 8 MB octal PSRAM) or N16R8 (16 MB / 8 MB). esptool's flash
+  # autodetect on this board reported 8 MB, so we declare N8R8. Running
+  # a mismatched flash_size causes a silent boot failure (partition
+  # table points past end of flash).
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+
+# Waveshare ESP32-S3-Touch-LCD-7 ships with the N16R8 module: 8 MB
+# octal PSRAM at 80 MHz. Must be declared explicitly or Phase 3's LVGL
+# buffers will land in SRAM and blow the heap.
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  baud_rate: 115200
+  # Route logs to the ESP32-S3's built-in USB-JTAG/Serial controller
+  # (the USB-C port labeled "USB" on the Waveshare board), not UART0.
+  # UART0 goes to the CH343 bridge on the "UART1" port — which we
+  # don't use for flashing (it can't reliably upload; see README).
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret fallback_ap_password
+
+# Captive portal on the fallback AP so a phone can configure Wi-Fi if
+# the primary network is unreachable.
+captive_portal:
