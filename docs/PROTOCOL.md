@@ -473,16 +473,53 @@ claims in §Observed behaviors are correlated to on-wire bytes.
 
 ## Known unknowns (deferred to later phases)
 
-- **First-command-after-idle maps to Nova instead of requested byte.**
-  Reproducible controller quirk observed during #8's live
-  measurements. After an extended idle (≥~1 min), the first tile
-  command sent over a fresh BLE connection causes the fixture to
-  cycle into Nova (0x07) regardless of which byte was written.
-  Indication echo comes back with the written byte, so the
-  controller receives the intended command — something else
-  intercepts the visual. The official Android/iOS apps don't exhibit
-  this (they hold continuously open connections). Investigation
-  tracked in **issue #33**.
+- **First-command-after-idle from an unbonded central triggers a
+  default effect instead of the requested byte** (investigated in #33;
+  verified reproducer). After an extended idle (≥~1 min), the first
+  tile command sent over a fresh BLE connection from a central that
+  is not bonded to the controller causes the fixture to enter some
+  effect that's not what we wrote — **Nova most often, occasionally
+  Patriot Dream or another show**. The BLE indication echoes carry
+  the byte we wrote, so the controller receives the intended command
+  at the wire level; the fixture's interpretation is what diverges.
+  Subsequent writes on the same already-warm connection land
+  correctly.
+
+  **Why the official apps don't hit this:** iOS / Android bond to the
+  controller automatically on first connect (Just Works pairing, no
+  user prompt because the BT121 doesn't demand a pin). Bonded
+  centrals don't trigger the default-effect behavior. The official
+  apps are _always_ bonded after their very first successful
+  connection.
+
+  **Why our bleak reference client on macOS can't fix this:** bleak's
+  explicit `client.pair()` returns `"Pairing is not available in Core
+  Bluetooth"`. macOS CoreBluetooth exposes **no public API for
+  initiating bonding** — it only bonds reactively when the peripheral
+  demands an encrypted link. The XG controller never demands
+  encryption, so macOS never bonds with it, and there's no
+  bleak-level knob that changes this. We tried `BleakClient(pair=True)`
+  (silent no-op), `client.pair()` (explicit failure), post-connect
+  settle delays 0.9-5 s (inconsistent), post-subscribe delays 0-5 s
+  (inconsistent: 2 s worked once out of ~8 attempts across values),
+  `--no-subscribe` (failed), `--read-first` (failed), targeted
+  service discovery (failed), and double-write with 250 ms gap
+  (both writes absorbed by the same quirk — failed).
+
+  **Why ESPHome won't hit this:** ESP-IDF exposes a full bonding API
+  and `esphome ble_client` bonds on first connect, storing the bond
+  in NVS. Phase 2 runs one bonded connection for the device's
+  lifetime. This quirk is therefore a **bleak-on-macOS-only**
+  limitation, not a protocol issue or a Phase 2 blocker.
+
+  **Workaround for `tools/cli.py` users:** if the first command after
+  a fresh connect produces the wrong effect, re-run the command.
+  The second invocation's connection will still be fresh-unbonded
+  (each CLI invocation is a new connection), so this doesn't fully
+  escape the quirk, but a re-run often lands differently because the
+  controller's internal timing/state has shifted. For reliable
+  command execution, keep one long-lived connection open across
+  many commands (which is what ESPHome does natively).
 - **Controller firmware revision string.** _Resolved 2026-04-19_:
   the controller **does not expose** a Firmware Revision String
   characteristic (UUID `0x2a26`) at all. The bleak client in #8 reads

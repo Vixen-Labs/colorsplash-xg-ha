@@ -280,6 +280,22 @@ async def _write_and_wait_echo(
     return WriteResult(byte=byte, name=name, write_ms=write_ms, echo_ms=echo_ms)
 
 
+async def _write_no_echo(client: BleakClient, byte: int) -> WriteResult:
+    """Write without waiting for a Handle Value Indication.
+
+    Used when --no-subscribe is in effect — we skip start_notify entirely,
+    so there's no callback to receive echoes. The ATT Write Response still
+    round-trips; we just don't measure the indication delta.
+    """
+    name = effect_name_for_byte(byte)
+    t0 = time.monotonic()
+    await client.write_gatt_char(COMMAND_CHAR_UUID, bytes([byte]), response=True)
+    write_ms = (time.monotonic() - t0) * 1000
+    _log("ble.write.no_echo", byte=f"0x{byte:02x}", name=f'"{name}"',
+         write_ms=f"{write_ms:.0f}")
+    return WriteResult(byte=byte, name=name, write_ms=write_ms, echo_ms=None)
+
+
 async def _read_dis(client: BleakClient) -> None:
     """Read + print the standard Device Information Service strings."""
     targets = [
@@ -336,8 +352,29 @@ async def _cmd_effect(args: argparse.Namespace) -> int:
     byte = args._resolved_byte
     client, addr = await _connect(args.address, args.timeout)
     try:
-        queue = await _subscribe(client)
-        await _write_and_wait_echo(client, byte, args.ack_timeout, queue)
+        await _apply_settle(args)
+        if getattr(args, "read_first", False):
+            try:
+                pre = await client.read_gatt_char(COMMAND_CHAR_UUID)
+                _log("ble.read_first", value=pre.hex() if pre else "empty",
+                     n_bytes=len(pre) if pre else 0)
+            except Exception as exc:
+                _log("ble.read_first.error", err=str(exc))
+        if getattr(args, "no_subscribe", False):
+            t0 = time.monotonic()
+            await client.write_gatt_char(COMMAND_CHAR_UUID, bytes([byte]), response=True)
+            _log("ble.write.no_echo",
+                 byte=f"0x{byte:02x}",
+                 name=f'"{effect_name_for_byte(byte)}"',
+                 write_ms=int((time.monotonic() - t0) * 1000))
+        else:
+            queue = await _subscribe(client)
+            post_sub = float(getattr(args, "post_subscribe_delay", 0.0) or 0.0)
+            if post_sub > 0:
+                _log("ble.post_subscribe_delay.start", seconds=post_sub)
+                await asyncio.sleep(post_sub)
+                _log("ble.post_subscribe_delay.done", seconds=post_sub)
+            await _write_and_wait_echo(client, byte, args.ack_timeout, queue)
         if args.hold > 0:
             _log("ble.hold.start", seconds=args.hold)
             await asyncio.sleep(args.hold)
@@ -347,9 +384,18 @@ async def _cmd_effect(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _apply_settle(args: argparse.Namespace) -> None:
+    settle = float(getattr(args, "connect_settle", 0.0) or 0.0)
+    if settle > 0:
+        _log("ble.settle.start", seconds=settle)
+        await asyncio.sleep(settle)
+        _log("ble.settle.done", seconds=settle)
+
+
 async def _cmd_info(args: argparse.Namespace) -> int:
     client, addr = await _connect(args.address, args.timeout)
     try:
+        await _apply_settle(args)
         await _read_dis(client)
     finally:
         await client.disconnect()
@@ -360,15 +406,26 @@ async def _cmd_sweep(args: argparse.Namespace) -> int:
     client, addr = await _connect(args.address, args.timeout)
     results: list[WriteResult] = []
     try:
-        queue = await _subscribe(client)
-        _log("sweep.start", n_effects=len(SWEEP_EFFECTS) + 1, inter_cmd_s=args.inter_cmd)
+        await _apply_settle(args)
+        queue: "asyncio.Queue[int] | None" = None
+        if not getattr(args, "no_subscribe", False):
+            queue = await _subscribe(client)
+        _log("sweep.start", n_effects=len(SWEEP_EFFECTS) + 1,
+             inter_cmd_s=args.inter_cmd,
+             subscribed=queue is not None)
         for name in SWEEP_EFFECTS:
             byte = EFFECT_TABLE[name]
-            r = await _write_and_wait_echo(client, byte, args.ack_timeout, queue)
+            if queue is not None:
+                r = await _write_and_wait_echo(client, byte, args.ack_timeout, queue)
+            else:
+                r = await _write_no_echo(client, byte)
             results.append(r)
             await asyncio.sleep(args.inter_cmd)
         # Tail: Standby so the fixture ends in a known off state.
-        r = await _write_and_wait_echo(client, EFFECT_TABLE["standby"], args.ack_timeout, queue)
+        if queue is not None:
+            r = await _write_and_wait_echo(client, EFFECT_TABLE["standby"], args.ack_timeout, queue)
+        else:
+            r = await _write_no_echo(client, EFFECT_TABLE["standby"])
         results.append(r)
         # Hold the connection so the final Standby's visual transition completes.
         if args.hold > 0:
@@ -415,6 +472,15 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="--sweep inter-command delay (default: 5 s — leave \u22655s for fixture transition)")
     p.add_argument("--hold", type=float, default=8.0,
                    help="after writing, keep the BLE connection open for N seconds before disconnecting. The fixture's visible transition requires the link to stay alive (5-8 s, see PROTOCOL.md). Default 8 s covers the upper bound. Pass --hold 0 to disconnect immediately (will likely kill the transition).")
+    p.add_argument("--connect-settle", type=float, default=0.0, dest="connect_settle",
+                   help="sleep N seconds between connect and the first BLE operation. Useful for investigating the first-command-after-idle Nova quirk (issue #33). Default 0 (no delay).")
+    p.add_argument("--no-subscribe", action="store_true", dest="no_subscribe",
+                   help="skip the CCCD subscribe (start_notify). Writes still happen but indication echoes aren't observed. Diagnostic for issue #33.")
+    p.add_argument("--read-first", action="store_true", dest="read_first",
+                   help="read the command characteristic before writing. Tests hypothesis H4a for issue #33 (controller may need a read to establish state context).")
+    p.add_argument("--post-subscribe-delay", type=float, default=0.0,
+                   dest="post_subscribe_delay",
+                   help="sleep N seconds between CCCD subscribe and the first write. Diagnostic flag for issue #33.")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
