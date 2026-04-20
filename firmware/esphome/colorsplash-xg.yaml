@@ -83,16 +83,69 @@ colorsplash_xg:
   # advertiser whose local name equals BGScripr.
   # mac_address: "AA:BB:CC:DD:EE:FF"
 
-# Debug buttons — prove #10's acceptance criterion without waiting
-# for the #11 light entity. Removed once the light lands.
+# HA-facing light entity (#11). on/off maps to the controller's
+# Standby byte; the 12 canonical effects (5 solids + 7 shows) are
+# auto-registered by the colorsplash_xg/light platform. Restore
+# to OFF on boot — the fixture's true state isn't readable, so we
+# don't pretend to restore the effect; the user re-selects on use.
+light:
+  - platform: colorsplash_xg
+    colorsplash_xg_id: xg
+    id: pool_light
+    name: "Pool Light"
+    restore_mode: ALWAYS_OFF
+
+# The 5 solid colors and the 2 show-control primitives (Lock,
+# Return) are all exposed as button entities. HA light entities
+# can't constrain their color picker to a discrete palette, so
+# buttons give a 1:1 mapping to the fixture's real presets and
+# avoid the impedance mismatch of HA's 8-swatch default palette
+# being shown for a light with only 5 colors. The dashboard card
+# groups these together visually.
 button:
+  # Solid colors — send the effect byte directly.
   - platform: template
-    name: "XG Debug: Parisian Blue"
+    name: "Pool Parisian Blue"
+    icon: "mdi:palette"
     on_press:
       then:
         - lambda: 'id(xg).send_effect_byte(0x08);'
   - platform: template
-    name: "XG Debug: Standby"
+    name: "Pool Brazilian Red"
+    icon: "mdi:palette"
     on_press:
       then:
-        - lambda: 'id(xg).send_effect_byte(0x00);'
+        - lambda: 'id(xg).send_effect_byte(0x0a);'
+  - platform: template
+    name: "Pool Arctic White"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0b);'
+  - platform: template
+    name: "Pool Miami Pink"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0c);'
+  - platform: template
+    name: "Pool New Zealand Green"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x09);'
+  # Show-control primitives — act on the controller's internal
+  # "last locked" slot. Lock captures current displayed color;
+  # Return replays it.
+  - platform: template
+    name: "Pool Lock"
+    icon: "mdi:lock"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0d);'
+  - platform: template
+    name: "Pool Return"
+    icon: "mdi:restore"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0e);'

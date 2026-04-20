@@ -21,6 +21,10 @@ ColorSplashXG = colorsplash_xg_ns.class_(
     esp32_ble_client.BLEClientBase,
 )
 
+# Exported for platform subdirectories (e.g. light/__init__.py) so a
+# user's light: block can reference the parent component by id.
+CONF_COLORSPLASH_XG_ID = "colorsplash_xg_id"
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {

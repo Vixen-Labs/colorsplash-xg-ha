@@ -9,6 +9,8 @@
 #include "esphome/core/component.h"
 
 #include <deque>
+#include <functional>
+#include <vector>
 
 namespace esphome {
 namespace colorsplash_xg {
@@ -53,11 +55,24 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
                            esp_gatt_if_t gattc_if,
                            esp_ble_gattc_cb_param_t *param) override;
 
-  // Public API — used by YAML lambdas and (soon) the light entity
-  // in #11.
+  // Public API — used by YAML lambdas and the light entity in #11.
   void send_effect_byte(uint8_t byte_value);
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
+
+  // Most recent "preset" byte sent — one of the 12 visible effects
+  // (0x01..0x0c). Used by the light entity to decide what to send
+  // when HA requests ON without a selected effect. Not updated for
+  // Standby (0x00), Lock (0x0D), or Return (0x0E) since those don't
+  // correspond to a steady displayed color.
+  optional<uint8_t> last_preset_byte() const { return this->last_preset_byte_; }
+
+  // Subscribe to every indication echo from the controller. Invoked
+  // from the BLE stack context; downstream code should treat the
+  // callback as best-effort and avoid long-running work inside it.
+  void add_on_echo_callback(std::function<void(uint8_t)> &&cb) {
+    this->on_echo_callbacks_.push_back(std::move(cb));
+  }
 
   // Optional YAML override for environments with multiple BGScripr
   // peripherals in range.
@@ -80,6 +95,10 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   bool write_in_flight_{false};
   std::deque<uint8_t> pending_writes_;
   optional<uint8_t> last_echoed_;
+  optional<uint8_t> last_queued_byte_;
+  uint32_t last_queued_at_ms_{0};
+  optional<uint8_t> last_preset_byte_;
+  std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 };
 
 }  // namespace colorsplash_xg
