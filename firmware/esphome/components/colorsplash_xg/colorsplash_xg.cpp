@@ -111,6 +111,18 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
       ESP_LOGD(TAG,
                "char handle=0x%04x cccd handle=0x%04x",
                this->cmd_char_handle_, this->cmd_cccd_handle_);
+      // Without this the ESP-IDF stack drops incoming
+      // Handle Value Indications before they reach us. Writing 0x0002
+      // to the CCCD enables indications on the peer, but this call is
+      // what routes them into our gattc_event_handler.
+      esp_err_t reg_err = esp_ble_gattc_register_for_notify(
+          this->get_gattc_if(), this->get_remote_bda(),
+          this->cmd_char_handle_);
+      if (reg_err != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "esp_ble_gattc_register_for_notify failed err=%d",
+                 reg_err);
+      }
       this->arm_cccd_();
       break;
     }
@@ -129,16 +141,18 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
     }
     case ESP_GATTC_WRITE_CHAR_EVT: {
       if (param->write.handle == this->cmd_char_handle_) {
-        // ATT Write Response received. The authoritative "state
-        // applied" signal is the indication echo below, so we don't
-        // clear write_in_flight_ here.
+        // ATT Write Response received — command was accepted by the
+        // peer. We drain the queue on this event rather than on the
+        // indication echo: the controller always echoes what we wrote
+        // (per PROTOCOL.md §Controller-to-central indications), so
+        // the echo carries no new information for routing our next
+        // write. last_echoed_ is still updated from NOTIFY_EVT below
+        // for callers that want to observe fixture state.
         if (param->write.status != ESP_GATT_OK) {
-          ESP_LOGW(TAG,
-                   "write failed status=%d — dropping in-flight flag",
-                   param->write.status);
-          this->write_in_flight_ = false;
-          this->try_drain_pending_();
+          ESP_LOGW(TAG, "write failed status=%d", param->write.status);
         }
+        this->write_in_flight_ = false;
+        this->try_drain_pending_();
       }
       break;
     }
@@ -155,8 +169,6 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
                  "indication echo 0x%02x (%s)",
                  echo,
                  name ? name : "unrecognized opcode");
-        this->write_in_flight_ = false;
-        this->try_drain_pending_();
       }
       break;
     }
