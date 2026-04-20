@@ -40,35 +40,51 @@ class ColorSplashPresetEffect : public light::LightEffect {
   ColorSplashXG *parent_;
 };
 
+struct SolidPreset {
+  const char *name;
+  uint8_t byte;
+  float r;  // 0..1
+  float g;
+  float b;
+};
+
 class ColorSplashLightOutput : public light::LightOutput {
  public:
   light::LightTraits get_traits() override {
     light::LightTraits traits;
-    traits.set_supported_color_modes({light::ColorMode::ON_OFF});
+    // RGB + ON_OFF: HA's color picker drives the 5 solid presets
+    // via nearest-neighbor snap; plain on/off still works.
+    traits.set_supported_color_modes(
+        {light::ColorMode::ON_OFF, light::ColorMode::RGB});
     return traits;
   }
-
-  // Hooks called by the LightState at boot time. We use
-  // setup_state() to build and attach the preset effects once
-  // parent_ is guaranteed to be set (Python codegen sets it before
-  // boot) and the LightState pointer is available.
-  void setup_state(light::LightState *state) override;
 
   void write_state(light::LightState *state) override;
 
   void set_parent(ColorSplashXG *parent) { this->parent_ = parent; }
 
-  // Called once per preset at codegen time. Names + bytes come from
-  // the canonical Python list in light/__init__.py — the single
-  // source of truth cross-verified by
-  // tests/test_esphome_light_effects.py.
-  void register_preset(const std::string &name, uint8_t byte) {
-    this->presets_.emplace_back(name, byte);
+  // Called from Python codegen, once per solid color in SOLID_COLORS.
+  // r, g, b arrive as uint8 0..255; we store as 0..1 floats to
+  // match ESPHome's internal LightColorValues format.
+  void register_solid(const char *name, uint8_t byte,
+                      uint8_t r, uint8_t g, uint8_t b) {
+    this->solids_.push_back(SolidPreset{
+        name,
+        byte,
+        r / 255.0f,
+        g / 255.0f,
+        b / 255.0f,
+    });
   }
 
  protected:
+  // Return the solid preset byte whose RGB is closest to (r,g,b)
+  // in plain Euclidean color space. Returns empty if the preset
+  // table was never populated (should not happen after codegen).
+  optional<uint8_t> nearest_solid_byte_(float r, float g, float b) const;
+
   ColorSplashXG *parent_{nullptr};
-  std::vector<std::pair<std::string, uint8_t>> presets_;
+  std::vector<SolidPreset> solids_;
 };
 
 }  // namespace colorsplash_xg

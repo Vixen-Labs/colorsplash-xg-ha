@@ -4,23 +4,30 @@
 
 #include "esphome/core/log.h"
 
+#include <limits>
+
 namespace esphome {
 namespace colorsplash_xg {
 
 static const char *const TAG = "colorsplash_xg.light";
 
-void ColorSplashLightOutput::setup_state(light::LightState *state) {
-  // LightState::add_effects only takes an initializer_list, so we
-  // feed it one preset at a time. The effect holds a const char *
-  // into presets_[i].first, so presets_ must stay alive for the
-  // lifetime of the process — we do not clear it.
-  for (auto &preset : this->presets_) {
-    auto *fx = new ColorSplashPresetEffect(  // NOLINT
-        preset.first.c_str(), preset.second, this->parent_);
-    state->add_effects({fx});
+optional<uint8_t> ColorSplashLightOutput::nearest_solid_byte_(
+    float r, float g, float b) const {
+  if (this->solids_.empty())
+    return {};
+  const SolidPreset *best = &this->solids_.front();
+  float best_d2 = std::numeric_limits<float>::max();
+  for (const auto &s : this->solids_) {
+    const float dr = s.r - r;
+    const float dg = s.g - g;
+    const float db = s.b - b;
+    const float d2 = dr * dr + dg * dg + db * db;
+    if (d2 < best_d2) {
+      best_d2 = d2;
+      best = &s;
+    }
   }
-  ESP_LOGCONFIG(TAG, "registered %u preset effects",
-                static_cast<unsigned>(this->presets_.size()));
+  return best->byte;
 }
 
 void ColorSplashLightOutput::write_state(light::LightState *state) {
@@ -32,20 +39,22 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     return;
   }
 
-  // HA asked for ON. Figure out what byte represents the requested
-  // state:
+  // HA asked for ON. Three resolvers, in order:
   //
-  // 1. If HA has an effect selected, look it up by name and send
-  //    that byte. Also handles the NVS-restore path — LightState
-  //    restores the effect index without calling effect.start(),
-  //    so doing the lookup here guarantees the fixture actually
-  //    comes up in the expected state.
-  // 2. Otherwise (effect == None), resume the most recent visible
-  //    preset we've seen. This covers the "toggle off, toggle on"
-  //    flow where the user expects the fixture to return to what
-  //    it was last showing.
-  // 3. Otherwise, pick Arctic White as a neutral default — better
-  //    than silently doing nothing.
+  // 1. A show effect (from SHOW_EFFECTS) is selected. Look up its
+  //    byte by name. Handles NVS restore too — LightState restores
+  //    the effect index without calling effect.start(), so the
+  //    lookup here guarantees the fixture comes up correctly.
+  //
+  // 2. An RGB color-mode call. Snap to the nearest of the 5 solid
+  //    presets by Euclidean distance in RGB space, send that byte.
+  //    HA's color picker maps any user-selected color to one of
+  //    our 5 solids this way.
+  //
+  // 3. Bare ON with no effect / no RGB pick (e.g. the user hit the
+  //    toggle). Resume the most recent visible preset, or Arctic
+  //    White as a neutral default. This matches the app's "light
+  //    comes back on in the last state" behavior.
 
   if (state->get_current_effect_index() != 0) {
     auto name = state->get_effect_name();
@@ -56,11 +65,18 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
       this->parent_->send_effect_byte(*byte);
       return;
     }
-    // Effect name didn't resolve — fall through to the default
-    // path. This should never happen for effects we registered.
     ESP_LOGW(TAG,
-             "unknown effect name '%.*s', falling back to default",
+             "unknown effect name '%.*s', falling through to color/default",
              static_cast<int>(name.size()), name.c_str());
+  }
+
+  if (state->current_values.get_color_mode() == light::ColorMode::RGB) {
+    float r, g, b;
+    state->current_values_as_rgb(&r, &g, &b);
+    if (auto snapped = this->nearest_solid_byte_(r, g, b)) {
+      this->parent_->send_effect_byte(*snapped);
+      return;
+    }
   }
 
   const auto last_preset = this->parent_->last_preset_byte();
