@@ -91,6 +91,23 @@ the Python process (System Settings → Privacy & Security → Camera).
 Requires `opencv-python` and `numpy` in the venv in addition to the
 base `requirements.txt` (install with `pip install opencv-python numpy`).
 
+## `observe_fixture.py`
+
+Short-duration camera observation that classifies the fixture as
+**CYCLING** (a show like Nova/Patriot Dream — colors change
+frame-to-frame) or **STABLE** (a solid color or Standby — colors
+hold). Uses a saturation-and-brightness mask to isolate the fixture
+pixels from pool water / tile / patio in daylight.
+
+```sh
+python tools/observe_fixture.py --seconds 15 --sat-threshold 200
+```
+
+Used during #33's investigation to confirm test outcomes without
+relying on human eyeball classification of the pool fixture from
+across a yard. Same opencv-python + numpy dependencies as the
+latency tools.
+
 ## `measure_latency.py`
 
 Post-hoc analysis of a separately-recorded video (e.g. a QuickTime
