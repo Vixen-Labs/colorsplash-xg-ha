@@ -341,13 +341,35 @@ Implications for implementors:
 The wire protocol is fast: the controller's Handle Value Indication
 echoes a write's byte back in ~60 ms (§Controller-to-central
 indications). The **physical fixture's response is not**. After any
-effect-change command, the pool light goes **dark** for a few seconds
-and then re-illuminates in the new state — total visible transition
-is **in the rough 5-8 second range** per contributor observation.
-That figure is an **estimate**, not a measurement; precise timing
-(and whether it varies by effect, prior state, or firmware mood)
-is a prerequisite for Phase 4b scrub work and is listed under
-§Known unknowns.
+effect-change command, the pool light goes **dark** for ≤0.5 s, stays
+dim for several seconds, and then re-illuminates at the new state.
+
+**Measured values** (2026-04-19, camera-based timing via
+`tools/measure_latency_live.py`, N=13 transitions in a single sweep):
+
+| Transition type | Total (s), mean | Total (s), range |
+|---|---:|---:|
+| Solid color → solid color (4 samples) | 8.53 | 7.64 – 9.25 |
+| Solid → show start (first stable brightness) | ~4–10 | 3.46 – 10.59 |
+| Any → Standby | — | <1 (fixture simply stops illuminating) |
+
+Onset (write → first brightness drop): **consistently < 0.5 s**,
+confirming the controller acts on the write almost immediately. The
+5-10 s is entirely the fixture's own transition envelope.
+
+Show transitions are noisier: because shows cycle their brightness
+internally, the "stable" detection catches transient plateaus during
+the cycle rather than a single settled value. Treat show timings as
+a lower bound on "how long until the show is clearly running."
+
+Standby looks artificially fast (0.39 s) because it's the BLE write
+latency itself — the fixture had already dimmed at the time it hit
+nadir, so there's no visible "re-illuminate" phase.
+
+The measured values agree with the earlier user-observed range
+(7-9 s for solid-to-solid transitions) and replace v1.3's "5-8 s
+estimate." Raw video + log under `captures/2026-04-19-latency/`
+(gitignored).
 
 Implications for implementors:
 
@@ -451,17 +473,16 @@ claims in §Observed behaviors are correlated to on-wire bytes.
 
 ## Known unknowns (deferred to later phases)
 
-- **Precise visual-transition latency.** The 5-8 s range in
-  §Observed behaviors → Visual transition latency is a contributor
-  estimate, not a measurement. We don't yet know whether the
-  transition window is constant, varies by destination effect
-  (shows vs. solid colors), depends on prior state, or differs
-  between cold-start and running. Phase 4b show-scrub timing needs
-  a reliable number here, ideally captured with a video frame
-  analysis or a photodiode (see PLAN.md Phase 4b). The bleak
-  reference client in #8 can at least bound the measurement by
-  timestamping its sent writes against a clock synchronized with
-  whatever sensor does the visual timing.
+- **First-command-after-idle maps to Nova instead of requested byte.**
+  Reproducible controller quirk observed during #8's live
+  measurements. After an extended idle (≥~1 min), the first tile
+  command sent over a fresh BLE connection causes the fixture to
+  cycle into Nova (0x07) regardless of which byte was written.
+  Indication echo comes back with the written byte, so the
+  controller receives the intended command — something else
+  intercepts the visual. The official Android/iOS apps don't exhibit
+  this (they hold continuously open connections). Investigation
+  tracked in **issue #33**.
 - **Controller firmware revision string.** _Resolved 2026-04-19_:
   the controller **does not expose** a Firmware Revision String
   characteristic (UUID `0x2a26`) at all. The bleak client in #8 reads
