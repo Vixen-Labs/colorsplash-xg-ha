@@ -4,12 +4,72 @@
 
 #include "esphome/components/esp32_ble_client/ble_characteristic.h"
 #include "esphome/components/esp32_ble_client/ble_descriptor.h"
+#include "esphome/core/application.h"
 #include "esphome/core/log.h"
+
+#include <cstdio>
 
 namespace esphome {
 namespace colorsplash_xg {
 
 static const char *const TAG = "colorsplash_xg";
+
+// Watchdog constants — see PROTOCOL.md §Auto-reconnect (#12).
+constexpr uint32_t kMaxFailuresBeforeReboot = 20;
+constexpr uint32_t kMinRebootIntervalMs = 5 * 60 * 1000;  // 5 minutes
+// Disconnects within this window of a successful connect count as
+// a connect failure (the peer dropped us during setup). Outside
+// this window, a disconnect is just "we used to be connected, now
+// we're not" — no need to count against the backoff.
+constexpr uint32_t kEarlyDisconnectWindowMs = 5000;
+
+uint32_t ColorSplashXG::backoff_ms_for_(uint32_t n) {
+  constexpr uint32_t kTable[] = {1000, 2000, 5000, 15000, 30000};
+  if (n == 0) return 0;
+  return (n - 1 < 5) ? kTable[n - 1] : 30000;
+}
+
+void ColorSplashXG::note_failure_(const char *reason, int code) {
+  this->consecutive_failures_++;
+  char buf[80];
+  std::snprintf(buf, sizeof(buf), "%s (code=%d) after %u attempts",
+                reason, code, this->consecutive_failures_);
+  this->last_error_ = buf;
+
+  const uint32_t now = millis();
+  const uint32_t delay_ms = backoff_ms_for_(this->consecutive_failures_);
+  this->next_connect_at_ms_ = now + delay_ms;
+  ESP_LOGW(TAG,
+           "BLE failure #%u: %s — backing off %u ms",
+           this->consecutive_failures_, reason, delay_ms);
+
+  // Last-resort: if we've failed too many times, reboot to reset
+  // the BLE stack. Guarded against rapid reboot loops by a minimum
+  // inter-reboot interval — if we've rebooted within the last 5
+  // minutes, just keep backing off and hoping.
+  if (this->consecutive_failures_ >= kMaxFailuresBeforeReboot &&
+      now - this->last_reboot_request_at_ms_ > kMinRebootIntervalMs) {
+    ESP_LOGE(TAG,
+             "BLE wedged after %u consecutive failures — rebooting "
+             "for stack reset",
+             this->consecutive_failures_);
+    this->last_reboot_request_at_ms_ = now;
+    this->last_error_ = "rebooting after repeated BLE failures";
+    App.safe_reboot();
+  }
+}
+
+void ColorSplashXG::note_connect_success_() {
+  if (this->consecutive_failures_ > 0) {
+    ESP_LOGI(TAG,
+             "connected after %u prior failures — resetting backoff",
+             this->consecutive_failures_);
+  }
+  this->consecutive_failures_ = 0;
+  this->next_connect_at_ms_ = 0;
+  this->last_connect_success_at_ms_ = millis();
+  this->last_error_.clear();
+}
 
 void ColorSplashXG::setup() {
   // auto_connect_=true tells the tracker to drive us into CONNECTING
@@ -49,6 +109,13 @@ void ColorSplashXG::dump_config() {
 bool ColorSplashXG::parse_device(const espbt::ESPBTDevice &device) {
   // Only act while we're actively looking for the peer.
   if (this->state() != espbt::ClientState::IDLE)
+    return false;
+
+  // Respect the backoff window. If a previous attempt failed, we
+  // deliberately ignore advertisements until the computed retry
+  // time arrives — this gives the peer and the stack time to
+  // settle instead of hammering esp_ble_gattc_open.
+  if (millis() < this->next_connect_at_ms_)
     return false;
 
   // MAC override wins if set; otherwise match on advertised local
@@ -174,13 +241,36 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
       }
       break;
     }
+    case ESP_GATTC_OPEN_EVT: {
+      // The connect attempt resolved. Either we made it (ESP_GATT_OK
+      // = session starting), or the open was rejected / timed out.
+      // Either way, this is where we learn "did this attempt work?".
+      if (param->open.status == ESP_GATT_OK) {
+        this->note_connect_success_();
+      } else {
+        this->note_failure_("open failed", param->open.status);
+      }
+      break;
+    }
     case ESP_GATTC_DISCONNECT_EVT: {
       this->cccd_armed_ = false;
       this->write_in_flight_ = false;
       this->cmd_char_handle_ = 0;
       this->cmd_cccd_handle_ = 0;
+      // An early disconnect (within kEarlyDisconnectWindowMs of a
+      // successful connect) means the peer dropped us during setup
+      // — count that as a connect failure so backoff kicks in.
+      // Disconnects after a long successful session are ignored
+      // here: the scanner will re-match via parse_device() with no
+      // delay, matching the happy-path reconnect we already had.
+      const uint32_t now = millis();
+      if (this->last_connect_success_at_ms_ != 0 &&
+          now - this->last_connect_success_at_ms_ <
+              kEarlyDisconnectWindowMs) {
+        this->note_failure_("early disconnect", param->disconnect.reason);
+      }
       // The tracker will start scanning again — parse_device() will
-      // pick the peripheral back up.
+      // pick the peripheral back up once the backoff window closes.
       break;
     }
     default:

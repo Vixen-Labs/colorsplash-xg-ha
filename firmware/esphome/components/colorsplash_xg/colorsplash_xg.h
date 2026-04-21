@@ -10,6 +10,7 @@
 
 #include <deque>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace esphome {
@@ -67,6 +68,12 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // correspond to a steady displayed color.
   optional<uint8_t> last_preset_byte() const { return this->last_preset_byte_; }
 
+  // Watchdog / diagnostic surface for the HA binary_sensor +
+  // text_sensor wired in YAML. `connected()` is inherited from
+  // BLEClientBase (true once ESTABLISHED). `last_error()` returns
+  // the most recent human-readable BLE error, empty when clean.
+  const std::string &last_error() const { return this->last_error_; }
+
   // Subscribe to every indication echo from the controller. Invoked
   // from the BLE stack context; downstream code should treat the
   // callback as best-effort and avoid long-running work inside it.
@@ -91,6 +98,19 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   uint16_t cmd_char_handle_{0};
   uint16_t cmd_cccd_handle_{0};
 
+  // Compute the retry delay after the N-th consecutive failure.
+  // Exponential-ish table: 1/2/5/15/30 s, capped at 30 s.
+  static uint32_t backoff_ms_for_(uint32_t consecutive_failures);
+
+  // Record a failure (timeout, bad GATT status, early disconnect)
+  // and arm the next reconnect window. May trigger App.safe_reboot()
+  // as a last-resort stack reset after many failures.
+  void note_failure_(const char *reason, int code);
+
+  // Called from the OPEN_EVT success path. Resets the failure
+  // counter and arms diagnostic state.
+  void note_connect_success_();
+
   uint64_t mac_override_{0};
   bool write_in_flight_{false};
   std::deque<uint8_t> pending_writes_;
@@ -99,6 +119,14 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   uint32_t last_queued_at_ms_{0};
   optional<uint8_t> last_preset_byte_;
   std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
+
+  // Watchdog state — see PROTOCOL.md §Auto-reconnect (#12) for the
+  // backoff table + reboot policy.
+  uint32_t consecutive_failures_{0};
+  uint32_t next_connect_at_ms_{0};
+  uint32_t last_connect_success_at_ms_{0};
+  uint32_t last_reboot_request_at_ms_{0};
+  std::string last_error_;
 };
 
 }  // namespace colorsplash_xg
