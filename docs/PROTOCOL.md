@@ -30,10 +30,18 @@ broader Phase 1 context.
 - DIS Manufacturer: **`Silicon Labs`**.
 - DIS Model: **`BT121`** — a Silicon Labs Bluetooth Smart module
   running BGScript firmware. BLE 4.2, 1 Mbps PHY only.
-- BD_ADDR OUI prefix: **SiliconLabor (`00:0b:57`)** — public identity
-  address block assigned to Silicon Laboratories.
+- BD_ADDR OUI prefix: The unit we tested advertises with OUI
+  `84:BA:20` (not the Silicon Labs `00:0B:57` prefix shown in
+  decompile / SIG registry data). The J&J board likely programs
+  a custom BD_ADDR. Treat the local name — not the MAC — as the
+  canonical "is this a ColorSplash controller?" test.
 - The controller accepts exactly one central at a time (per
   `docs/CAPTURING.md` §2.3).
+- **BT status LED**: a green LED labeled `BT` on the enclosure
+  **blinks** while no central is connected (advertising state) and
+  goes **solid** when a central establishes a GATT connection.
+  Useful as an eyeball-level "am I connected?" check at the
+  equipment pad without needing to open HA or read logs.
 
 ## Android client
 
@@ -253,6 +261,27 @@ echo is the **authoritative UI-state signal** from the controller. The
 app does not assume its own write succeeded until it receives the
 echo. This is important for a reference implementation: treat the
 indication as the ack, not the ATT Write Response.
+
+### Unsolicited indications on reconnect (2026-04-20)
+
+During the Phase 2 #12 watchdog test (10 power-cycle trials of the
+controller), the ESP32 saw a `0x0e` (Return) indication arriving
+~13-18 seconds **after** each successful reconnect, with no
+preceding central-side write. The central had neither sent `0x0e`
+nor any other byte in that window — it's the controller itself
+emitting an unsolicited Return indication on a schedule after a
+fresh connection comes up.
+
+The interpretation fits the app's Return handler: "effect rolled
+back." The controller appears to be asserting "I'm at my last
+locked state now" after a reconnect sequence finishes stabilising.
+
+Implication for clients: an incoming indication on `0x000f` is NOT
+always an echo of a recent write. Treat it as a pure state-change
+signal and ignore the "do I have a matching outbound write?" check.
+This also partially resolves the v1.4 Known-unknown about
+proactive state indications — the controller does emit at least
+one unsolicited indication (Return) on its own cadence.
 
 ## Observed behaviors
 
