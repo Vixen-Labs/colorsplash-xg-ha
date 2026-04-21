@@ -1,7 +1,8 @@
 # tools/
 
-Three helper scripts for the Phase 1 reverse-engineering workflow.
-All target Python 3 and prefer stdlib where practical.
+Helper scripts for the reverse-engineering workflow (Phase 1) plus
+the soak-test report generator (Phase 2 #13). All target Python 3
+and prefer stdlib where practical.
 
 ## `capture-session`
 
@@ -122,3 +123,18 @@ python tools/measure_latency.py captures/YYYY-MM-DD-latency/
 Useful when the camera can't be running during capture (e.g., you used
 QuickTime recording via phone or another Mac and brought the file back
 later). Same opencv-python + numpy dependency as `measure_latency_live.py`.
+
+## `soak_report.py`
+
+Consumes an `esphome logs` capture (plaintext or `.gz`) from the #13
+72-hour soak test and emits a markdown summary: reconnect-latency
+distribution, uptime fraction, command / error counts, watchdog reboot
+events. Stdlib-only.
+
+```sh
+python tools/soak_report.py captures/soak-2026-04-20.log
+```
+
+See [`docs/SOAK_TEST.md`](../docs/SOAK_TEST.md) for the full soak
+procedure. Paste the generated report into that file's Results
+section before opening the follow-up PR that closes #13.

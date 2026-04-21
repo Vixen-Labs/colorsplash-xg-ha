@@ -74,6 +74,23 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // the most recent human-readable BLE error, empty when clean.
   const std::string &last_error() const { return this->last_error_; }
 
+  // Diagnostic surface for #13 entities. RSSI is polled every
+  // ~30 s while connected (0 when unknown). last_command_name()
+  // formats the most recent sent byte as "name (0xNN)" — empty
+  // before any byte has been sent this session. Counters are
+  // monotonic within a boot session.
+  int8_t last_rssi() const { return this->last_rssi_; }
+  const std::string &last_command_name() const {
+    return this->last_command_name_;
+  }
+  uint32_t total_commands() const { return this->total_commands_; }
+  uint32_t total_errors() const { return this->total_errors_; }
+
+  // GAP events land here so we can pick up RSSI read results.
+  // Chains to BLEClientBase's handler for everything else.
+  void gap_event_handler(esp_gap_ble_cb_event_t event,
+                         esp_ble_gap_cb_param_t *param) override;
+
   // Subscribe to every indication echo from the controller. Invoked
   // from the BLE stack context; downstream code should treat the
   // callback as best-effort and avoid long-running work inside it.
@@ -127,6 +144,15 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   uint32_t last_connect_success_at_ms_{0};
   uint32_t last_reboot_request_at_ms_{0};
   std::string last_error_;
+
+  // Diagnostic counters + last-seen values for #13 entities.
+  // RSSI is 0 until the first READ_RSSI_COMPLETE lands; counters
+  // reset on reboot (documented in SOAK_TEST.md).
+  int8_t last_rssi_{0};
+  uint32_t next_rssi_poll_at_ms_{0};
+  std::string last_command_name_;
+  uint32_t total_commands_{0};
+  uint32_t total_errors_{0};
 };
 
 }  // namespace colorsplash_xg

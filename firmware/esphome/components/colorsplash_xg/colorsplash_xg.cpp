@@ -17,6 +17,10 @@ static const char *const TAG = "colorsplash_xg";
 // Watchdog constants — see PROTOCOL.md §Auto-reconnect (#12).
 constexpr uint32_t kMaxFailuresBeforeReboot = 20;
 constexpr uint32_t kMinRebootIntervalMs = 5 * 60 * 1000;  // 5 minutes
+// How often to ask the ESP-IDF controller for the link-layer RSSI
+// of our connection. 30 s is plenty; RSSI shifts slowly and this
+// value feeds a diagnostic sensor, not a control loop.
+constexpr uint32_t kRssiPollIntervalMs = 30 * 1000;
 // Disconnects within this window of a successful connect count as
 // a connect failure (the peer dropped us during setup). Outside
 // this window, a disconnect is just "we used to be connected, now
@@ -31,6 +35,7 @@ uint32_t ColorSplashXG::backoff_ms_for_(uint32_t n) {
 
 void ColorSplashXG::note_failure_(const char *reason, int code) {
   this->consecutive_failures_++;
+  this->total_errors_++;
   char buf[80];
   std::snprintf(buf, sizeof(buf), "%s (code=%d) after %u attempts",
                 reason, code, this->consecutive_failures_);
@@ -85,6 +90,35 @@ void ColorSplashXG::setup() {
 void ColorSplashXG::loop() {
   BLEClientBase::loop();
   this->try_drain_pending_();
+
+  // Periodically ask the controller for the link-layer RSSI of
+  // our connection. ESP-IDF replies asynchronously via a GAP
+  // event (ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT) which lands in
+  // gap_event_handler() below.
+  const uint32_t now = millis();
+  if (this->connected() && now >= this->next_rssi_poll_at_ms_) {
+    this->next_rssi_poll_at_ms_ = now + kRssiPollIntervalMs;
+    esp_err_t err = esp_ble_gap_read_rssi(this->remote_bda_);
+    if (err != ESP_OK) {
+      ESP_LOGD(TAG, "esp_ble_gap_read_rssi failed err=%d", err);
+    }
+  }
+}
+
+void ColorSplashXG::gap_event_handler(esp_gap_ble_cb_event_t event,
+                                      esp_ble_gap_cb_param_t *param) {
+  // Chain to the base so it sees the scan / connection events it
+  // relies on — then layer our RSSI hook on top.
+  BLEClientBase::gap_event_handler(event, param);
+  if (event == ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT) {
+    if (param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+      this->last_rssi_ = param->read_rssi_cmpl.rssi;
+      ESP_LOGD(TAG, "rssi update: %d dBm", this->last_rssi_);
+    } else {
+      ESP_LOGD(TAG, "rssi read status=%d",
+               param->read_rssi_cmpl.status);
+    }
+  }
 }
 
 void ColorSplashXG::dump_config() {
@@ -257,6 +291,9 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
       this->write_in_flight_ = false;
       this->cmd_char_handle_ = 0;
       this->cmd_cccd_handle_ = 0;
+      // "No signal" beats a stale RSSI reading when disconnected.
+      this->last_rssi_ = 0;
+      this->next_rssi_poll_at_ms_ = 0;
       // An early disconnect (within kEarlyDisconnectWindowMs of a
       // successful connect) means the peer dropped us during setup
       // — count that as a connect failure so backoff kicks in.
@@ -359,7 +396,12 @@ void ColorSplashXG::try_drain_pending_() {
     return;
   }
   this->write_in_flight_ = true;
+  this->total_commands_++;
   const char *name = decode_byte(byte_value);
+  char formatted[48];
+  std::snprintf(formatted, sizeof(formatted), "%s (0x%02x)",
+                name ? name : "raw", byte_value);
+  this->last_command_name_ = formatted;
   ESP_LOGI(TAG, "sent byte 0x%02x (%s)",
            byte_value, name ? name : "raw");
 }
