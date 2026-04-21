@@ -149,3 +149,22 @@ button:
     on_press:
       then:
         - lambda: 'id(xg).send_effect_byte(0x0e);'
+
+# Watchdog surface for HA (#12). The binary_sensor mirrors the BLE
+# client's connected() state so HA can flag a disconnected fixture
+# in automations / dashboards; the text_sensor exposes the most
+# recent BLE error so the user has immediate feedback without
+# having to open the ESPHome logs.
+binary_sensor:
+  - platform: template
+    name: "Pool BLE Connected"
+    id: pool_ble_connected
+    device_class: connectivity
+    lambda: 'return id(xg).connected();'
+
+text_sensor:
+  - platform: template
+    name: "Pool Last BLE Error"
+    id: pool_last_ble_error
+    update_interval: 15s
+    lambda: 'return id(xg).last_error();'
