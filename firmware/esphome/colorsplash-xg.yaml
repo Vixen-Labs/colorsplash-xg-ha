@@ -168,3 +168,39 @@ text_sensor:
     id: pool_last_ble_error
     update_interval: 15s
     lambda: 'return id(xg).last_error();'
+  - platform: template
+    name: "Pool Last Command"
+    id: pool_last_command
+    update_interval: 15s
+    lambda: 'return id(xg).last_command_name();'
+
+# Numeric diagnostics (#13). RSSI is polled every 30 s while
+# connected; the two counters are monotonic-within-session totals
+# that reset on reboot.
+sensor:
+  - platform: template
+    name: "Pool BLE RSSI"
+    id: pool_ble_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      int8_t v = id(xg).last_rssi();
+      if (v == 0) return NAN;  // 0 = not yet queried / disconnected
+      return (float) v;
+  - platform: template
+    name: "Pool Command Count"
+    id: pool_command_count
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: 'return (float) id(xg).total_commands();'
+  - platform: template
+    name: "Pool Error Count"
+    id: pool_error_count
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: 'return (float) id(xg).total_errors();'
