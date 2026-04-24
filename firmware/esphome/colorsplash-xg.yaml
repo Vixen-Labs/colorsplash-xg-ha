@@ -1,11 +1,13 @@
 ---
 # ColorSplash XG → ESPHome bridge, running on a Waveshare
-# ESP32-S3-Touch-LCD-7 (ESP32-S3-WROOM-1-N16R8 module: 16 MB flash, 8 MB
-# octal PSRAM).
+# ESP32-S3-Touch-LCD-7 (N8R8: 8 MB flash, 8 MB octal PSRAM).
 #
-# This is the Phase 2 #9 scaffolding config — boot + Wi-Fi + HA API +
-# OTA only. No BLE (that's #10), no display (that's #14), no LVGL
-# (Phase 3). Stable foundation for everything that follows.
+# Current scope (Phase 2 complete + Phase 3 #14 display bring-up):
+#   - Boot, Wi-Fi, HA API, OTA, captive-portal fallback (#9)
+#   - BLE client + self-discovery (#10)
+#   - `light.pool_light` + 5 solid-color buttons + Lock/Return (#11)
+#   - Watchdog + auto-reconnect + diagnostic sensors (#12 / #13)
+#   - 800×480 RGB panel + GT911 touch + LVGL hello-world (#14)
 #
 # See firmware/esphome/README.md for setup and flashing steps.
 
@@ -204,3 +206,57 @@ sensor:
     accuracy_decimals: 0
     update_interval: 30s
     lambda: 'return (float) id(xg).total_errors();'
+
+# ─── Phase 3 #14: display + touch + LVGL ────────────────────────
+# Waveshare ESP32-S3-Touch-LCD-7 (800×480 RGB parallel + GT911 cap
+# touch + CH422G I/O expander). ESPHome ships presets for all the
+# scary parts — RGB pin map, timing, and touch driver. Only the
+# I²C and touch interrupt/reset pin selections are community-
+# reference (not covered by the board preset); values below are
+# Waveshare's canonical wiring and may need adjustment if the
+# screen is black on first flash.
+
+i2c:
+  id: bus_a
+  sda: 8
+  scl: 9
+  frequency: 400kHz
+
+# The CH422G drives the LCD reset + enable + (likely) backlight
+# lines so the MCU keeps those 4 GPIOs free. Its I²C address is
+# fixed in hardware — no `address:` needed.
+ch422g:
+  id: io_expander
+  i2c_id: bus_a
+
+display:
+  - platform: mipi_rgb
+    id: main_display
+    model: ESP32-S3-TOUCH-LCD-7-800X480
+    # The preset pins reset + enable lines via the ch422g; they
+    # reference `ch422g: null` internally, which resolves to our
+    # io_expander above.
+
+touchscreen:
+  - platform: gt911
+    id: pool_touch
+    i2c_id: bus_a
+    interrupt_pin: GPIO4
+    reset_pin:
+      ch422g: io_expander
+      number: 1
+    display: main_display
+    on_touch:
+      - lambda: |-
+          ESP_LOGI("touch", "x=%d y=%d id=%d",
+                   touch.x, touch.y, touch.id);
+
+# Minimal LVGL block — with no `pages:` or top-level widgets, the
+# component auto-renders its built-in hello-world (spinner +
+# button + QR code + slider). That exercises the display pipeline
+# and the touch pipeline together, meeting both of #14's
+# acceptance criteria in one go. #15 replaces this with the real
+# UI.
+lvgl:
+  displays: main_display
+  touchscreens: pool_touch
