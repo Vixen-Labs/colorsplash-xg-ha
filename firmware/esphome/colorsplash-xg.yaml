@@ -96,6 +96,50 @@ light:
     id: pool_light
     name: "Pool Light"
     restore_mode: ALWAYS_OFF
+    # Fires any time the light's on/off or effect changes — from
+    # HA, from our LVGL UI, or from initial NVS restore. The lambda
+    # reads the component's last_preset_byte() + is_on() and
+    # updates every LVGL tile's highlight + the header current-
+    # effect label. Single trigger covers screen ↔ HA both ways.
+    on_state:
+      - lambda: |-
+          const bool on = id(pool_light).current_values.is_on();
+          const auto last = id(xg).last_preset_byte();
+          auto match = [&](uint8_t byte) {
+            return on && last.has_value() && *last == byte;
+          };
+          auto apply = [&](lv_obj_t *obj, bool checked) {
+            if (checked) lv_obj_add_state(obj, LV_STATE_CHECKED);
+            else         lv_obj_remove_state(obj, LV_STATE_CHECKED);
+          };
+          apply(id(tile_blue),        match(0x08));
+          apply(id(tile_red),         match(0x0A));
+          apply(id(tile_white),       match(0x0B));
+          apply(id(tile_pink),        match(0x0C));
+          apply(id(tile_green),       match(0x09));
+          apply(id(tile_nova),        match(0x07));
+          apply(id(tile_super_nova),  match(0x02));
+          apply(id(tile_northern),    match(0x03));
+          apply(id(tile_tidal),       match(0x04));
+          apply(id(tile_patriot),     match(0x05));
+          apply(id(tile_desert),      match(0x06));
+          apply(id(tile_peruvian),    match(0x01));
+          // Header status: show the effect name (or "Off" when off,
+          // or "On" when on without a recognised preset — e.g.
+          // right after a Return).
+          const char *caption = "Off";
+          if (on) {
+            if (last.has_value()) {
+              const char *n = esphome::colorsplash_xg::decode_byte(*last);
+              caption = (n != nullptr) ? n : "On";
+            } else {
+              caption = "On";
+            }
+          }
+          lv_label_set_text(id(lbl_current), caption);
+          // Power button checked state reflects on/off so its amber
+          // highlight is the at-a-glance "is the pool light on?".
+          apply(id(btn_power), on);
 
 # The 5 solid colors and the 2 show-control primitives (Lock,
 # Return) are all exposed as button entities. HA light entities
@@ -233,9 +277,9 @@ display:
   - platform: mipi_rgb
     id: main_display
     model: ESP32-S3-TOUCH-LCD-7-800X480
-    # The preset pins reset + enable lines via the ch422g; they
-    # reference `ch422g: null` internally, which resolves to our
-    # io_expander above.
+    # Rotation is declared on the LVGL block below — the mipi_rgb
+    # display must be in its native orientation here; LVGL handles
+    # the rotated render.
 
 touchscreen:
   - platform: gt911
@@ -246,17 +290,537 @@ touchscreen:
       ch422g: io_expander
       number: 1
     display: main_display
+    # Touch coordinates must match the rotated display. For 270° CW
+    # rotation: swap X/Y axes and mirror one. If taps register in
+    # the wrong corner, toggle mirror_x vs mirror_y (or both).
+    transform:
+      swap_xy: true
+      mirror_y: true
     on_touch:
       - lambda: |-
           ESP_LOGI("touch", "x=%d y=%d id=%d",
                    touch.x, touch.y, touch.id);
 
-# Minimal LVGL block — with no `pages:` or top-level widgets, the
-# component auto-renders its built-in hello-world (spinner +
-# button + QR code + slider). That exercises the display pipeline
-# and the touch pipeline together, meeting both of #14's
-# acceptance criteria in one go. #15 replaces this with the real
-# UI.
+# ─── Phase 3 #15: LVGL main screen ──────────────────────────────
+# Portrait 480×800. Header (power + title + current effect). Two
+# sections: Colors (5 solids + R-badge Return) and Shows (7 shows
+# with gradient backgrounds, and the Lock button sharing the last
+# row). Tile taps dispatch bytes directly (solids, Lock, Return)
+# or via the light entity (shows, via effect selection). The
+# active-effect highlight follows `id(xg).last_preset_byte()`,
+# which stays in sync regardless of whether the change came from
+# the screen, HA, or an automation.
+
 lvgl:
   displays: main_display
   touchscreens: pool_touch
+  # 270° CW rotation → native 800×480 landscape becomes 480×800
+  # portrait with the USB edge at the bottom. If the panel comes
+  # up upside-down, change to 90.
+  rotation: 270
+  # Page-wide dark background so the colored tiles pop.
+  bg_color: 0x0D0D14
+  text_color: 0xF0F0F0
+  # Global touch-pressed feel — dim slightly on any button-like
+  # widget. Keeps the press response fast and visible without
+  # animation overhead.
+  theme:
+    button:
+      pressed:
+        bg_opa: 70%
+  pages:
+    - id: page_main
+      bg_color: 0x0D0D14
+      pad_all: 12
+      scrollable: false
+      layout:
+        type: flex
+        flex_flow: column
+        flex_align_main: start
+        flex_align_cross: center
+        pad_row: 14
+      widgets:
+
+        # ─── Header row ─────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 80
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: space_between
+              flex_align_cross: center
+            widgets:
+              # Power button — left side.
+              - button:
+                  id: btn_power
+                  width: 64
+                  height: 64
+                  radius: 32
+                  bg_color: 0x1E1E28
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checked:
+                    bg_color: 0xFFBF1C   # amber when "on"
+                  on_click:
+                    - light.toggle: pool_light
+                  widgets:
+                    - label:
+                        text: "\uF011"   # LV_SYMBOL_POWER
+                        text_font: montserrat_28
+                        align: CENTER
+                        text_color: 0xF0F0F0
+              # Title + current-effect stack — right side.
+              - obj:
+                  width: size_content
+                  height: size_content
+                  pad_all: 0
+                  bg_opa: transp
+                  border_width: 0
+                  scrollable: false
+                  layout:
+                    type: flex
+                    flex_flow: column
+                    flex_align_main: center
+                    flex_align_cross: end
+                  widgets:
+                    - label:
+                        text: "Pool Light"
+                        text_font: montserrat_24
+                        text_color: 0xF0F0F0
+                    - label:
+                        id: lbl_current
+                        text: "Off"
+                        text_font: montserrat_14
+                        text_color: 0x888899
+
+        # ─── Colors section header ──────────────────────────────
+        - label:
+            text: "Colors"
+            text_font: montserrat_16
+            text_color: 0x888899
+            align: LEFT_MID
+
+        # ─── Colors tile grid: 3×2 ──────────────────────────────
+        - obj:
+            width: 100%
+            height: 240
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row_wrap
+              flex_align_main: space_between
+              flex_align_cross: center
+              pad_row: 10
+              pad_column: 10
+            widgets:
+              - button:
+                  id: tile_blue
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0x0000FF
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x08);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - label:
+                        text: "Parisian\nBlue"
+                        text_color: 0xFFFFFF
+                        text_align: CENTER
+                        align: CENTER
+
+              - button:
+                  id: tile_red
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFF0000
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0a);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - label:
+                        text: "Brazilian\nRed"
+                        text_color: 0xFFFFFF
+                        text_align: CENTER
+                        align: CENTER
+
+              - button:
+                  id: tile_white
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFFFFFF
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  border_width: 1
+                  border_color: 0x444455
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFBF1C
+                    outline_pad: 3
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0b);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - label:
+                        text: "Arctic\nWhite"
+                        text_color: 0x111111
+                        text_align: CENTER
+                        align: CENTER
+
+              - button:
+                  id: tile_pink
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFF00FF
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0c);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - label:
+                        text: "Miami\nPink"
+                        text_color: 0xFFFFFF
+                        text_align: CENTER
+                        align: CENTER
+
+              - button:
+                  id: tile_green
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0x00FF00
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x09);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - label:
+                        text: "New Zealand\nGreen"
+                        text_color: 0x111111
+                        text_align: CENTER
+                        align: CENTER
+
+              # Return — styled as a "swatch" with the canonical "R"
+              # badge the #41 spec calls for. Gray base since we don't
+              # know the locked color until Lock is pressed.
+              - button:
+                  id: tile_return
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0x3A3A44
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0e);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - label:
+                        text: "R"
+                        text_font: montserrat_48
+                        text_color: 0xF0F0F0
+                        align: TOP_MID
+                        y: 6
+                    - label:
+                        text: "Return"
+                        text_font: montserrat_14
+                        text_color: 0xC0C0CC
+                        align: BOTTOM_MID
+                        y: -8
+
+        # ─── Shows section header ───────────────────────────────
+        - label:
+            text: "Shows"
+            text_font: montserrat_16
+            text_color: 0x888899
+            align: LEFT_MID
+
+        # ─── Shows tile grid: 3×2 + (1 + Lock) ──────────────────
+        # Each show tile has a 2-stop linear gradient approximating
+        # the multi-color sequence documented in PROTOCOL.md §Show
+        # color gradients. The gradient conveys the show's identity
+        # even without running the actual animation.
+        - obj:
+            width: 100%
+            height: 360
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row_wrap
+              flex_align_main: space_between
+              flex_align_cross: center
+              pad_row: 10
+              pad_column: 10
+            widgets:
+              - button:
+                  id: tile_nova
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFEEA00       # yellow (first)
+                  bg_grad_color: 0xDC0BB3  # magenta (cycle endpoint)
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Nova");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Nova"
+                        text_font: montserrat_18
+                        text_color: 0xFFFFFF
+                        align: CENTER
+
+              - button:
+                  id: tile_super_nova
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0x71CD2E
+                  bg_grad_color: 0x1649D5
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Super Nova");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Super\nNova"
+                        text_align: CENTER
+                        text_color: 0xFFFFFF
+                        align: CENTER
+
+              - button:
+                  id: tile_northern
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFD3000       # red-orange
+                  bg_grad_color: 0x0E65F7  # blue
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Northern Lights");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Northern\nLights"
+                        text_align: CENTER
+                        text_color: 0xFFFFFF
+                        align: CENTER
+
+              - button:
+                  id: tile_tidal
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0x00A351       # green
+                  bg_grad_color: 0x0675AB  # blue
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Tidal Wave");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Tidal\nWave"
+                        text_align: CENTER
+                        text_color: 0xFFFFFF
+                        align: CENTER
+
+              - button:
+                  id: tile_patriot
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xE32139       # red
+                  bg_grad_color: 0x398CC6  # blue (white is in middle, 2-stop approximation)
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Patriot Dream");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Patriot\nDream"
+                        text_align: CENTER
+                        text_color: 0xFFFFFF
+                        align: CENTER
+
+              - button:
+                  id: tile_desert
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFFB347       # amber (guess — PROTOCOL.md marks endpoints unknown)
+                  bg_grad_color: 0xC9327B  # magenta (ditto)
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Desert Skies");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Desert\nSkies"
+                        text_align: CENTER
+                        text_color: 0xFFFFFF
+                        align: CENTER
+
+              - button:
+                  id: tile_peruvian
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFFFFFF       # white (gradient starts white)
+                  bg_grad_color: 0x1ABC9C  # teal (gradient ends teal)
+                  bg_grad_dir: VER
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  border_width: 1
+                  border_color: 0x444455
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFBF1C
+                    outline_pad: 3
+                  on_click:
+                    - lambda: |-
+                        auto call = id(pool_light).turn_on();
+                        call.set_effect("Peruvian Paradise");
+                        call.perform();
+                  widgets:
+                    - label:
+                        text: "Peruvian\nParadise"
+                        text_align: CENTER
+                        text_color: 0x111111
+                        align: CENTER
+
+              # Lock — pairs with Return on the colors row; placed at
+              # the tail of the shows grid to fill the 8th slot.
+              # Lock is an action, not a mode, so it's not checkable.
+              - button:
+                  id: tile_lock
+                  width: 140
+                  height: 110
+                  radius: 16
+                  bg_color: 0xFFBF1C       # amber — distinct from both color swatches + show gradients
+                  bg_opa: cover
+                  shadow_width: 10
+                  shadow_opa: 40%
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0d);'
+                  widgets:
+                    - label:
+                        text: "\uF023"     # LV_SYMBOL_LOCK
+                        text_font: montserrat_28
+                        text_color: 0x111111
+                        align: TOP_MID
+                        y: 10
+                    - label:
+                        text: "Lock"
+                        text_font: montserrat_16
+                        text_color: 0x111111
+                        align: BOTTOM_MID
+                        y: -10
