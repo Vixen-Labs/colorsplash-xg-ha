@@ -104,13 +104,36 @@ def _parse_ts(line: str, date_cursor: datetime) -> datetime | None:
     )
 
 
-def parse(stream) -> SoakStats:
+_FILENAME_DATE_RE = re.compile(r"soak-(\d{4}-\d{2}-\d{2})\.log")
+
+
+def _infer_start_date(path: str | Path | None) -> datetime:
+    """Pick a plausible absolute date to anchor the log's clock-only
+    timestamps. Falls back to today when the hint sources yield nothing
+    useful."""
+    if path is not None:
+        p = Path(path)
+        m = _FILENAME_DATE_RE.search(p.name)
+        if m:
+            return datetime.strptime(m.group(1), "%Y-%m-%d")
+        if p.exists():
+            # mtime is the last write — earlier events happened at or
+            # before this date, so use it as an upper bound anchor.
+            mtime = datetime.fromtimestamp(p.stat().st_mtime)
+            return mtime.replace(hour=0, minute=0, second=0, microsecond=0)
+    return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def parse(stream, start_date: datetime | None = None) -> SoakStats:
     stats = SoakStats()
     open_recon: ReconnectEvent | None = None
     # The log doesn't carry dates, only clock time. We track a
     # cursor date and bump it by one day whenever we see the clock
-    # roll backwards.
-    date_cursor = datetime(2000, 1, 1)
+    # roll backwards. Caller gets to anchor the date; filename or
+    # today's date works for live-tail captures.
+    date_cursor = start_date or datetime.now().replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
     last_ts: datetime | None = None
     for line in stream:
         ts = _parse_ts(line, date_cursor)
@@ -220,6 +243,16 @@ def format_report(stats: SoakStats) -> str:
             f"- **Approx uptime:** {uptime_frac * 100:.3f}% "
             f"(lower bound — counts only reconnect-window seconds)"
         )
+    elif wall and stats.disconnects == 0 and not stats.reconnects:
+        # No disconnects observed for the entire run — uptime is
+        # 100% within the measurement resolution (1 s).
+        uptime_frac = 1.0
+        buf.append(
+            "- **Uptime:** 100.000% "
+            "(no disconnects observed across the run)"
+        )
+    else:
+        uptime_frac = None
     buf.append("")
 
     if stats.sent_count or stats.echo_count:
@@ -259,7 +292,7 @@ def format_report(stats: SoakStats) -> str:
         buf.append("- [x] No watchdog reboots")
     else:
         buf.append(f"- [ ] No watchdog reboots (saw {stats.reboots})")
-    if wall and latencies:
+    if uptime_frac is not None:
         if uptime_frac >= 0.99:
             buf.append("- [x] ≥99% connectivity uptime")
         else:
@@ -282,10 +315,11 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if args.log:
+        start = _infer_start_date(args.log)
         with _open_maybe_gz(args.log) as f:
-            stats = parse(f)
+            stats = parse(f, start_date=start)
     else:
-        stats = parse(sys.stdin)
+        stats = parse(sys.stdin, start_date=_infer_start_date(None))
 
     if stats.first_event_at is None:
         print("no timestamped log lines found", file=sys.stderr)
