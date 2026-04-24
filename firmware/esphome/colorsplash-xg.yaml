@@ -112,34 +112,42 @@ light:
             if (checked) lv_obj_add_state(obj, LV_STATE_CHECKED);
             else         lv_obj_remove_state(obj, LV_STATE_CHECKED);
           };
-          apply(id(tile_blue),        match(0x08));
-          apply(id(tile_red),         match(0x0A));
-          apply(id(tile_white),       match(0x0B));
-          apply(id(tile_pink),        match(0x0C));
-          apply(id(tile_green),       match(0x09));
-          apply(id(tile_nova),        match(0x07));
-          apply(id(tile_super_nova),  match(0x02));
-          apply(id(tile_northern),    match(0x03));
-          apply(id(tile_tidal),       match(0x04));
-          apply(id(tile_patriot),     match(0x05));
-          apply(id(tile_desert),      match(0x06));
-          apply(id(tile_peruvian),    match(0x01));
-          // Header status: show the effect name (or "Off" when off,
-          // or "On" when on without a recognised preset — e.g.
-          // right after a Return).
-          const char *caption = "Off";
-          if (on) {
-            if (last.has_value()) {
-              const char *n = esphome::colorsplash_xg::decode_byte(*last);
-              caption = (n != nullptr) ? n : "On";
-            } else {
-              caption = "On";
+          // Color circles track the active solid preset.
+          apply(id(circle_blue),  match(0x08));
+          apply(id(circle_red),   match(0x0A));
+          apply(id(circle_white), match(0x0B));
+          apply(id(circle_pink),  match(0x0C));
+          apply(id(circle_green), match(0x09));
+          // Switch tracks on/off.
+          apply(id(sw_power), on);
+          // Dropdown tracks the current effect index. 0 = None;
+          // 1-7 = shows in the same order as the YAML options list.
+          uint16_t idx = 0;
+          if (on && last.has_value()) {
+            switch (*last) {
+              case 0x07: idx = 1; break;  // Nova
+              case 0x02: idx = 2; break;  // Super Nova
+              case 0x03: idx = 3; break;  // Northern Lights
+              case 0x04: idx = 4; break;  // Tidal Wave
+              case 0x05: idx = 5; break;  // Patriot Dream
+              case 0x06: idx = 6; break;  // Desert Skies
+              case 0x01: idx = 7; break;  // Peruvian Paradise
+              default:   idx = 0; break;  // solid / lock / return
             }
           }
-          lv_label_set_text(id(lbl_current), caption);
-          // Power button checked state reflects on/off so its amber
-          // highlight is the at-a-glance "is the pool light on?".
-          apply(id(btn_power), on);
+          id(dd_effect)->set_selected_index(idx, LV_ANIM_OFF);
+          // Subtitle: "Off", "On", "Currently: Nova", etc.
+          char buf[48];
+          if (!on) {
+            std::strcpy(buf, "Off");
+          } else if (last.has_value()) {
+            const char *n = esphome::colorsplash_xg::decode_byte(*last);
+            std::snprintf(buf, sizeof(buf), "Currently: %s",
+                          n ? n : "(unknown)");
+          } else {
+            std::strcpy(buf, "On");
+          }
+          lv_label_set_text(id(lbl_current), buf);
 
 # The 5 solid colors and the 2 show-control primitives (Lock,
 # Return) are all exposed as button entities. HA light entities
@@ -301,29 +309,26 @@ touchscreen:
           ESP_LOGI("touch", "x=%d y=%d id=%d",
                    touch.x, touch.y, touch.id);
 
-# ─── Phase 3 #15: LVGL main screen ──────────────────────────────
-# Portrait 480×800. Header (power + title + current effect). Two
-# sections: Colors (5 solids + R-badge Return) and Shows (7 shows
-# with gradient backgrounds, and the Lock button sharing the last
-# row). Tile taps dispatch bytes directly (solids, Lock, Return)
-# or via the light entity (shows, via effect selection). The
-# active-effect highlight follows `id(xg).last_preset_byte()`,
-# which stays in sync regardless of whether the change came from
-# the screen, HA, or an automation.
+# ─── Phase 3 #15: LVGL main screen (HA-card style) ──────────────
+# Portrait 480×800. Layout mirrors Home Assistant's standard
+# light-entity card:
+#   - Title + current-state subtitle at top
+#   - Off/On switch widget (HA-style toggle)
+#   - "Color" section — 5 circular swatches matching the fixture's
+#     pure-primary LEDs
+#   - "Effect" section — dropdown with None + 7 show names
+#   - Bottom action row — Lock + Return
+# State sync via `light.on_state` reflects the entity's state into
+# the switch position, selected color ring, dropdown index, and
+# subtitle text — regardless of whether the change originated on
+# the screen, in HA, or from an automation.
 
 lvgl:
   displays: main_display
   touchscreens: pool_touch
-  # 270° CW rotation → native 800×480 landscape becomes 480×800
-  # portrait with the USB edge at the bottom. If the panel comes
-  # up upside-down, change to 90.
   rotation: 270
-  # Page-wide dark background so the colored tiles pop.
   bg_color: 0x0D0D14
   text_color: 0xF0F0F0
-  # Global touch-pressed feel — dim slightly on any button-like
-  # widget. Keeps the press response fast and visible without
-  # animation overhead.
   theme:
     button:
       pressed:
@@ -331,17 +336,252 @@ lvgl:
   pages:
     - id: page_main
       bg_color: 0x0D0D14
-      pad_all: 12
+      pad_all: 20
       scrollable: false
       layout:
         type: flex
         flex_flow: column
         flex_align_main: start
         flex_align_cross: center
-        pad_row: 14
+        pad_row: 16
       widgets:
 
-        # ─── Header row ─────────────────────────────────────────
+        # ─── Header: title + current state ──────────────────────
+        - label:
+            text: "Pool Light"
+            text_font: montserrat_28
+            text_color: 0xF0F0F0
+        - label:
+            id: lbl_current
+            text: "Off"
+            text_font: montserrat_14
+            text_color: 0x888899
+
+        # ─── On/Off switch row ──────────────────────────────────
+        # Classic HA pattern: Off label · switch · On label.
+        - obj:
+            width: size_content
+            height: size_content
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: center
+              flex_align_cross: center
+              pad_column: 16
+            widgets:
+              - label:
+                  text: "Off"
+                  text_color: 0x888899
+                  text_font: montserrat_16
+              - switch:
+                  id: sw_power
+                  width: 80
+                  height: 40
+                  # Subtle track when off, amber when on — matches
+                  # HA's default light-entity accent.
+                  bg_color: 0x333344
+                  indicator:
+                    bg_color: 0x333344
+                    checked:
+                      bg_color: 0xFFBF1C
+                  on_value:
+                    - if:
+                        condition:
+                          lambda: 'return x;'
+                        then:
+                          - light.turn_on: pool_light
+                        else:
+                          - light.turn_off: pool_light
+              - label:
+                  text: "On"
+                  text_color: 0x888899
+                  text_font: montserrat_16
+
+        # ─── Divider ────────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 1
+            bg_color: 0x222233
+            bg_opa: cover
+            border_width: 0
+
+        # ─── Color section ──────────────────────────────────────
+        - label:
+            text: "Color"
+            text_font: montserrat_16
+            text_color: 0x888899
+            align: LEFT_MID
+        # 5 circular swatches in a row. Each is a checkable button
+        # with radius=36 for a perfect circle; active highlight is
+        # a white outline ring (amber on light-coloured swatches).
+        - obj:
+            width: 100%
+            height: 100
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: space_evenly
+              flex_align_cross: center
+            widgets:
+              - button:
+                  id: circle_blue
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0x0000FF
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x08);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_red
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0xFF0000
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0a);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_white
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0xFFFFFF
+                  bg_opa: cover
+                  border_width: 1
+                  border_color: 0x444455
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFBF1C
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0b);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_pink
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0xFF00FF
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0c);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_green
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0x00FF00
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x09);'
+                    - light.turn_on: {id: pool_light}
+
+        # ─── Divider ────────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 1
+            bg_color: 0x222233
+            bg_opa: cover
+            border_width: 0
+
+        # ─── Effect section ─────────────────────────────────────
+        - label:
+            text: "Effect"
+            text_font: montserrat_16
+            text_color: 0x888899
+            align: LEFT_MID
+        - dropdown:
+            id: dd_effect
+            width: 100%
+            height: 54
+            text_font: montserrat_18
+            bg_color: 0x1E1E28
+            border_color: 0x333344
+            border_width: 1
+            options:
+              - "None"
+              - "Nova"
+              - "Super Nova"
+              - "Northern Lights"
+              - "Tidal Wave"
+              - "Patriot Dream"
+              - "Desert Skies"
+              - "Peruvian Paradise"
+            # on_value fires with `x` = newly-selected index.
+            on_value:
+              - lambda: |-
+                  static const char *const names[] = {
+                      "", "Nova", "Super Nova", "Northern Lights",
+                      "Tidal Wave", "Patriot Dream", "Desert Skies",
+                      "Peruvian Paradise"};
+                  if (x == 0) {
+                    // "None" was picked — clear any active effect
+                    // but leave the on/off state alone.
+                    auto call = id(pool_light).turn_on();
+                    call.set_effect("None");
+                    call.perform();
+                  } else if (x >= 1 && x <= 7) {
+                    auto call = id(pool_light).turn_on();
+                    call.set_effect(names[x]);
+                    call.perform();
+                  }
+
+        # ─── Divider ────────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 1
+            bg_color: 0x222233
+            bg_opa: cover
+            border_width: 0
+
+        # ─── Bottom actions: Lock + Return ──────────────────────
         - obj:
             width: 100%
             height: 80
@@ -354,473 +594,73 @@ lvgl:
               flex_flow: row
               flex_align_main: space_between
               flex_align_cross: center
+              pad_column: 16
             widgets:
-              # Power button — left side.
               - button:
-                  id: btn_power
-                  width: 64
+                  id: btn_lock
+                  width: 200
                   height: 64
-                  radius: 32
-                  bg_color: 0x1E1E28
-                  shadow_width: 8
-                  shadow_opa: 40%
-                  checked:
-                    bg_color: 0xFFBF1C   # amber when "on"
-                  on_click:
-                    - light.toggle: pool_light
-                  widgets:
-                    - label:
-                        text: "\uF011"   # LV_SYMBOL_POWER
-                        text_font: montserrat_28
-                        align: CENTER
-                        text_color: 0xF0F0F0
-              # Title + current-effect stack — right side.
-              - obj:
-                  width: size_content
-                  height: size_content
-                  pad_all: 0
-                  bg_opa: transp
-                  border_width: 0
-                  scrollable: false
-                  layout:
-                    type: flex
-                    flex_flow: column
-                    flex_align_main: center
-                    flex_align_cross: end
-                  widgets:
-                    - label:
-                        text: "Pool Light"
-                        text_font: montserrat_24
-                        text_color: 0xF0F0F0
-                    - label:
-                        id: lbl_current
-                        text: "Off"
-                        text_font: montserrat_14
-                        text_color: 0x888899
-
-        # ─── Colors section header ──────────────────────────────
-        - label:
-            text: "Colors"
-            text_font: montserrat_16
-            text_color: 0x888899
-            align: LEFT_MID
-
-        # ─── Colors tile grid: 3×2 ──────────────────────────────
-        - obj:
-            width: 100%
-            height: 240
-            pad_all: 0
-            bg_opa: transp
-            border_width: 0
-            scrollable: false
-            layout:
-              type: flex
-              flex_flow: row_wrap
-              flex_align_main: space_between
-              flex_align_cross: center
-              pad_row: 10
-              pad_column: 10
-            widgets:
-              - button:
-                  id: tile_blue
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0x0000FF
+                  radius: 12
+                  bg_color: 0x2A2A36
                   bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
+                  shadow_width: 6
+                  shadow_opa: 30%
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x08);'
-                    - light.turn_on: {id: pool_light}
+                    - lambda: 'id(xg).send_effect_byte(0x0d);'
                   widgets:
-                    - label:
-                        text: "Parisian\nBlue"
-                        text_color: 0xFFFFFF
-                        text_align: CENTER
+                    - obj:
+                        width: size_content
+                        height: size_content
+                        pad_all: 0
+                        bg_opa: transp
+                        border_width: 0
                         align: CENTER
-
+                        layout:
+                          type: flex
+                          flex_flow: row
+                          flex_align_cross: center
+                          pad_column: 10
+                        widgets:
+                          - label:
+                              text: "\uF023"  # LV_SYMBOL_LOCK
+                              text_font: montserrat_20
+                              text_color: 0xFFBF1C
+                          - label:
+                              text: "Lock"
+                              text_font: montserrat_18
+                              text_color: 0xF0F0F0
               - button:
-                  id: tile_red
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFF0000
+                  id: btn_return
+                  width: 200
+                  height: 64
+                  radius: 12
+                  bg_color: 0x2A2A36
                   bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0a);'
-                    - light.turn_on: {id: pool_light}
-                  widgets:
-                    - label:
-                        text: "Brazilian\nRed"
-                        text_color: 0xFFFFFF
-                        text_align: CENTER
-                        align: CENTER
-
-              - button:
-                  id: tile_white
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFFFFFF
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  border_width: 1
-                  border_color: 0x444455
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFBF1C
-                    outline_pad: 3
-                  on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0b);'
-                    - light.turn_on: {id: pool_light}
-                  widgets:
-                    - label:
-                        text: "Arctic\nWhite"
-                        text_color: 0x111111
-                        text_align: CENTER
-                        align: CENTER
-
-              - button:
-                  id: tile_pink
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFF00FF
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0c);'
-                    - light.turn_on: {id: pool_light}
-                  widgets:
-                    - label:
-                        text: "Miami\nPink"
-                        text_color: 0xFFFFFF
-                        text_align: CENTER
-                        align: CENTER
-
-              - button:
-                  id: tile_green
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0x00FF00
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x09);'
-                    - light.turn_on: {id: pool_light}
-                  widgets:
-                    - label:
-                        text: "New Zealand\nGreen"
-                        text_color: 0x111111
-                        text_align: CENTER
-                        align: CENTER
-
-              # Return — styled as a "swatch" with the canonical "R"
-              # badge the #41 spec calls for. Gray base since we don't
-              # know the locked color until Lock is pressed.
-              - button:
-                  id: tile_return
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0x3A3A44
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
+                  shadow_width: 6
+                  shadow_opa: 30%
                   on_click:
                     - lambda: 'id(xg).send_effect_byte(0x0e);'
                     - light.turn_on: {id: pool_light}
                   widgets:
-                    - label:
-                        text: "R"
-                        text_font: montserrat_48
-                        text_color: 0xF0F0F0
-                        align: TOP_MID
-                        y: 6
-                    - label:
-                        text: "Return"
-                        text_font: montserrat_14
-                        text_color: 0xC0C0CC
-                        align: BOTTOM_MID
-                        y: -8
-
-        # ─── Shows section header ───────────────────────────────
-        - label:
-            text: "Shows"
-            text_font: montserrat_16
-            text_color: 0x888899
-            align: LEFT_MID
-
-        # ─── Shows tile grid: 3×2 + (1 + Lock) ──────────────────
-        # Each show tile has a 2-stop linear gradient approximating
-        # the multi-color sequence documented in PROTOCOL.md §Show
-        # color gradients. The gradient conveys the show's identity
-        # even without running the actual animation.
-        - obj:
-            width: 100%
-            height: 360
-            pad_all: 0
-            bg_opa: transp
-            border_width: 0
-            scrollable: false
-            layout:
-              type: flex
-              flex_flow: row_wrap
-              flex_align_main: space_between
-              flex_align_cross: center
-              pad_row: 10
-              pad_column: 10
-            widgets:
-              - button:
-                  id: tile_nova
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFEEA00       # yellow (first)
-                  bg_grad_color: 0xDC0BB3  # magenta (cycle endpoint)
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Nova");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Nova"
-                        text_font: montserrat_18
-                        text_color: 0xFFFFFF
+                    - obj:
+                        width: size_content
+                        height: size_content
+                        pad_all: 0
+                        bg_opa: transp
+                        border_width: 0
                         align: CENTER
+                        layout:
+                          type: flex
+                          flex_flow: row
+                          flex_align_cross: center
+                          pad_column: 10
+                        widgets:
+                          - label:
+                              text: "\uF0E2"  # LV_SYMBOL_UNDO / return-like
+                              text_font: montserrat_20
+                              text_color: 0x71CD2E
+                          - label:
+                              text: "Return"
+                              text_font: montserrat_18
+                              text_color: 0xF0F0F0
 
-              - button:
-                  id: tile_super_nova
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0x71CD2E
-                  bg_grad_color: 0x1649D5
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Super Nova");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Super\nNova"
-                        text_align: CENTER
-                        text_color: 0xFFFFFF
-                        align: CENTER
-
-              - button:
-                  id: tile_northern
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFD3000       # red-orange
-                  bg_grad_color: 0x0E65F7  # blue
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Northern Lights");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Northern\nLights"
-                        text_align: CENTER
-                        text_color: 0xFFFFFF
-                        align: CENTER
-
-              - button:
-                  id: tile_tidal
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0x00A351       # green
-                  bg_grad_color: 0x0675AB  # blue
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Tidal Wave");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Tidal\nWave"
-                        text_align: CENTER
-                        text_color: 0xFFFFFF
-                        align: CENTER
-
-              - button:
-                  id: tile_patriot
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xE32139       # red
-                  bg_grad_color: 0x398CC6  # blue (white is in middle, 2-stop approximation)
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Patriot Dream");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Patriot\nDream"
-                        text_align: CENTER
-                        text_color: 0xFFFFFF
-                        align: CENTER
-
-              - button:
-                  id: tile_desert
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFFB347       # amber (guess — PROTOCOL.md marks endpoints unknown)
-                  bg_grad_color: 0xC9327B  # magenta (ditto)
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFFFFF
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Desert Skies");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Desert\nSkies"
-                        text_align: CENTER
-                        text_color: 0xFFFFFF
-                        align: CENTER
-
-              - button:
-                  id: tile_peruvian
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFFFFFF       # white (gradient starts white)
-                  bg_grad_color: 0x1ABC9C  # teal (gradient ends teal)
-                  bg_grad_dir: VER
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  border_width: 1
-                  border_color: 0x444455
-                  checkable: true
-                  checked:
-                    outline_width: 4
-                    outline_color: 0xFFBF1C
-                    outline_pad: 3
-                  on_click:
-                    - lambda: |-
-                        auto call = id(pool_light).turn_on();
-                        call.set_effect("Peruvian Paradise");
-                        call.perform();
-                  widgets:
-                    - label:
-                        text: "Peruvian\nParadise"
-                        text_align: CENTER
-                        text_color: 0x111111
-                        align: CENTER
-
-              # Lock — pairs with Return on the colors row; placed at
-              # the tail of the shows grid to fill the 8th slot.
-              # Lock is an action, not a mode, so it's not checkable.
-              - button:
-                  id: tile_lock
-                  width: 140
-                  height: 110
-                  radius: 16
-                  bg_color: 0xFFBF1C       # amber — distinct from both color swatches + show gradients
-                  bg_opa: cover
-                  shadow_width: 10
-                  shadow_opa: 40%
-                  on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0d);'
-                  widgets:
-                    - label:
-                        text: "\uF023"     # LV_SYMBOL_LOCK
-                        text_font: montserrat_28
-                        text_color: 0x111111
-                        align: TOP_MID
-                        y: 10
-                    - label:
-                        text: "Lock"
-                        text_font: montserrat_16
-                        text_color: 0x111111
-                        align: BOTTOM_MID
-                        y: -10
