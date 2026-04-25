@@ -286,6 +286,79 @@ sensor:
     update_interval: 30s
     lambda: 'return (float) id(xg).total_errors();'
 
+# Custom font for the Bluetooth status icon — bundled Montserrat
+# doesn't carry the FA Bluetooth glyph at usable sizes. Pull
+# Material Symbols Outlined from Google Fonts at compile time and
+# bake in only the single glyph we need (U+E1A7 = bluetooth).
+font:
+  - file: "gfonts://Material Symbols Outlined"
+    id: icon_font_18
+    size: 18
+    glyphs:
+      - "\uE1A7"  # bluetooth
+
+# ─── Phase 3 #17: status bar polling ────────────────────────────
+# Refreshes the four status-bar icons in the LVGL UI once per
+# second so each indicator reflects live system health within ~1 s
+# (the issue's acceptance window). State sources:
+#   - WiFi:   wifi::global_wifi_component->is_connected()
+#   - HA API: api::global_api_server->is_connected()
+#   - BLE:    id(xg).connected() (BLEClientBase ESTABLISHED)
+#   - RSSI:   id(xg).last_rssi() (polled every 30s by the BLE
+#             component; 0 when disconnected)
+# Colour scheme: green (#71CD2E) = healthy, grey (#666677) = idle
+# / not yet connected, red (#E32139) = unhealthy.
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          const auto OK    = lv_color_hex(0x71CD2E);
+          const auto IDLE  = lv_color_hex(0x666677);
+          const auto BAD   = lv_color_hex(0xE32139);
+          const auto MUTED = lv_color_hex(0x888899);
+          // WiFi
+          const bool wifi_up =
+              esphome::wifi::global_wifi_component->is_connected();
+          lv_obj_set_style_text_color(
+              id(lbl_status_wifi), wifi_up ? OK : BAD, 0);
+          // HA API
+          const bool api_up =
+              esphome::api::global_api_server->is_connected();
+          lv_obj_set_style_text_color(
+              id(lbl_status_api), api_up ? OK : IDLE, 0);
+          // BLE link to the controller
+          const bool ble_up = id(xg).connected();
+          lv_obj_set_style_text_color(
+              id(lbl_status_ble), ble_up ? OK : BAD, 0);
+          // 5-bar RSSI indicator empirically calibrated against
+          // actual ESP32-S3-Touch-LCD-7 ↔ ColorSplash readings:
+          // 1 ft separation steady-states at ~-58 dBm; the
+          // watchdog test saw -56 to -66 dBm at 1-2 m. Anchor the
+          // scale so close-range = full bars, "across the room"
+          // ≈ 3 bars, and the real connect-loss threshold (around
+          // -88 dBm on this hardware) lights only one. RSSI of 0
+          // means "not yet known" → all bars off.
+          const int8_t rssi = id(xg).last_rssi();
+          int bars = 0;
+          if (rssi != 0) {
+            if (rssi >= -88) bars = 1;
+            if (rssi >= -82) bars = 2;
+            if (rssi >= -75) bars = 3;
+            if (rssi >= -68) bars = 4;
+            if (rssi >= -60) bars = 5;
+          }
+          const auto BAR_OFF = lv_color_hex(0x333344);
+          lv_obj_set_style_bg_color(
+              id(rssi_bar_1), bars >= 1 ? OK : BAR_OFF, 0);
+          lv_obj_set_style_bg_color(
+              id(rssi_bar_2), bars >= 2 ? OK : BAR_OFF, 0);
+          lv_obj_set_style_bg_color(
+              id(rssi_bar_3), bars >= 3 ? OK : BAR_OFF, 0);
+          lv_obj_set_style_bg_color(
+              id(rssi_bar_4), bars >= 4 ? OK : BAR_OFF, 0);
+          lv_obj_set_style_bg_color(
+              id(rssi_bar_5), bars >= 5 ? OK : BAR_OFF, 0);
+
 # ─── Phase 3 #14: display + touch + LVGL ────────────────────────
 # Waveshare ESP32-S3-Touch-LCD-7 (800×480 RGB parallel + GT911 cap
 # touch + CH422G I/O expander). ESPHome ships presets for all the
@@ -351,14 +424,12 @@ touchscreen:
 lvgl:
   displays: main_display
   touchscreens: pool_touch
-  # 90° CW rotation → USB edge at the bottom. Previously 270°
-  # rendered upside-down on this board's mount orientation.
-  # TEMPORARILY disabled to test the hypothesis that LVGL software
-  # rotation is causing the panel-refresh glitches via PSRAM-bus
-  # contention. Layout will look squashed / wrong-aspect in
-  # landscape — that's expected; we're just looking at panel
-  # stability.
-  # rotation: 90
+  # 90° CW rotation → USB edge at the bottom. Stable now that
+  # PSRAM is at 120 MHz + the patched mipi_rgb has num_fbs=2 +
+  # bb_invalidate_cache + 64-byte alignment. Earlier glitch
+  # troubleshooting falsely implicated rotation; the real cause
+  # was PSRAM-bus contention — see docs/WAVESHARE_LCD_TUNING.md.
+  rotation: 90
   # Tear-free recipe (combined with patched mipi_rgb num_fbs=2):
   #   - buffer_size: 100% gives LVGL its own back-buffer matching
   #     the rotated dimensions
@@ -389,6 +460,66 @@ lvgl:
         flex_align_cross: center
         pad_row: 16
       widgets:
+
+        # ─── Status bar (#17) ────────────────────────────────────
+        # Four glanceable indicators at the very top of the page:
+        # Wi-Fi, HA API, BLE-to-controller, BLE RSSI. Each label
+        # is updated by the interval timer below; colour is the
+        # at-a-glance health signal (green = good, grey = unknown
+        # / not yet connected, red = fail).
+        - obj:
+            width: 100%
+            height: 24
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: space_between
+              flex_align_cross: center
+              pad_column: 4
+            widgets:
+              - label:
+                  id: lbl_status_wifi
+                  text: "\uF1EB"          # LV_SYMBOL_WIFI
+                  text_font: montserrat_18
+                  text_color: 0x666677
+              - label:
+                  id: lbl_status_api
+                  text: "\uF015"          # LV_SYMBOL_HOME (HA proxy)
+                  text_font: montserrat_18
+                  text_color: 0x666677
+              - label:
+                  id: lbl_status_ble
+                  text: "\uE1A7"          # Material Symbols bluetooth
+                  text_font: icon_font_18
+                  text_color: 0x666677
+              # 5-bar RSSI indicator. Each bar is a tiny styled
+              # rectangle (~3 px wide × increasing height). The
+              # polling lambda below sets bg_color per bar based on
+              # last_rssi() — bright when signal is strong enough
+              # to "earn" that bar, muted otherwise.
+              - obj:
+                  width: 24
+                  height: 16
+                  pad_all: 0
+                  bg_opa: transp
+                  border_width: 0
+                  scrollable: false
+                  layout:
+                    type: flex
+                    flex_flow: row
+                    flex_align_main: end
+                    flex_align_cross: end
+                    pad_column: 1
+                  widgets:
+                    - obj: {id: rssi_bar_1, width: 3, height: 4,  radius: 1, bg_color: 0x333344, bg_opa: cover, border_width: 0}
+                    - obj: {id: rssi_bar_2, width: 3, height: 6,  radius: 1, bg_color: 0x333344, bg_opa: cover, border_width: 0}
+                    - obj: {id: rssi_bar_3, width: 3, height: 9,  radius: 1, bg_color: 0x333344, bg_opa: cover, border_width: 0}
+                    - obj: {id: rssi_bar_4, width: 3, height: 12, radius: 1, bg_color: 0x333344, bg_opa: cover, border_width: 0}
+                    - obj: {id: rssi_bar_5, width: 3, height: 15, radius: 1, bg_color: 0x333344, bg_opa: cover, border_width: 0}
 
         # ─── Header: title + current state ──────────────────────
         - label:
