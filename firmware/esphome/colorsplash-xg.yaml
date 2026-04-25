@@ -32,13 +32,40 @@ esp32:
   framework:
     type: esp-idf
     version: recommended
+    # Required for octal-PSRAM at 120 MHz (still flagged experimental
+    # upstream by Espressif; Waveshare's reference enables it
+    # explicitly).
+    advanced:
+      enable_idf_experimental_features: true
+    # Additional vendor-recommended sdkconfig values from Waveshare's
+    # official ESP-IDF reference (waveshareteam/ESP32-S3-Touch-LCD-7B
+    # example 13_LVGL_TRANSPLANT). Performance tunings that benefit
+    # RGB-panel + LVGL workloads.
+    #
+    # NOTE: Waveshare's reference also sets
+    # CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y, but that's specific to
+    # ESP-IDF's managed-components LVGL packaging. ESPHome uses a
+    # different LVGL packaging that doesn't define the corresponding
+    # macro under that Kconfig — enabling it produces compile
+    # errors. Skipped here.
+    sdkconfig_options:
+      CONFIG_FREERTOS_HZ: "1000"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: y
+      CONFIG_COMPILER_OPTIMIZATION_PERF: y
 
 # Waveshare ESP32-S3-Touch-LCD-7 ships with the N16R8 module: 8 MB
 # octal PSRAM at 80 MHz. Must be declared explicitly or Phase 3's LVGL
 # buffers will land in SRAM and blow the heap.
 psram:
   mode: octal
-  speed: 80MHz
+  # Vendor-recommended (Waveshare's sdkconfig.defaults uses
+  # CONFIG_SPIRAM_SPEED_120M=y). 50% faster PSRAM bus than 80MHz
+  # gives the RGB panel DMA enough margin against WiFi/BLE
+  # contention to eliminate scanline tearing. 120MHz is marked
+  # experimental in upstream ESP-IDF — the framework
+  # sdkconfig_options block above sets the required experimental
+  # flag.
+  speed: 120MHz
 
 logger:
   level: INFO
@@ -96,6 +123,58 @@ light:
     id: pool_light
     name: "Pool Light"
     restore_mode: ALWAYS_OFF
+    # Fires any time the light's on/off or effect changes — from
+    # HA, from our LVGL UI, or from initial NVS restore. The lambda
+    # reads the component's last_preset_byte() + is_on() and
+    # updates every LVGL tile's highlight + the header current-
+    # effect label. Single trigger covers screen ↔ HA both ways.
+    on_state:
+      - lambda: |-
+          const bool on = id(pool_light).current_values.is_on();
+          const auto last = id(xg).last_preset_byte();
+          auto match = [&](uint8_t byte) {
+            return on && last.has_value() && *last == byte;
+          };
+          auto apply = [&](lv_obj_t *obj, bool checked) {
+            if (checked) lv_obj_add_state(obj, LV_STATE_CHECKED);
+            else         lv_obj_remove_state(obj, LV_STATE_CHECKED);
+          };
+          // Color circles track the active solid preset.
+          apply(id(circle_blue),  match(0x08));
+          apply(id(circle_red),   match(0x0A));
+          apply(id(circle_white), match(0x0B));
+          apply(id(circle_pink),  match(0x0C));
+          apply(id(circle_green), match(0x09));
+          // Switch tracks on/off.
+          apply(id(sw_power), on);
+          // Dropdown tracks the current effect index. 0 = None;
+          // 1-7 = shows in the same order as the YAML options list.
+          uint16_t idx = 0;
+          if (on && last.has_value()) {
+            switch (*last) {
+              case 0x07: idx = 1; break;  // Nova
+              case 0x02: idx = 2; break;  // Super Nova
+              case 0x03: idx = 3; break;  // Northern Lights
+              case 0x04: idx = 4; break;  // Tidal Wave
+              case 0x05: idx = 5; break;  // Patriot Dream
+              case 0x06: idx = 6; break;  // Desert Skies
+              case 0x01: idx = 7; break;  // Peruvian Paradise
+              default:   idx = 0; break;  // solid / lock / return
+            }
+          }
+          id(dd_effect)->set_selected_index(idx, LV_ANIM_OFF);
+          // Subtitle: "Off", "On", "Currently: Nova", etc.
+          char buf[48];
+          if (!on) {
+            std::strcpy(buf, "Off");
+          } else if (last.has_value()) {
+            const char *n = esphome::colorsplash_xg::decode_byte(*last);
+            std::snprintf(buf, sizeof(buf), "Currently: %s",
+                          n ? n : "(unknown)");
+          } else {
+            std::strcpy(buf, "On");
+          }
+          lv_label_set_text(id(lbl_current), buf);
 
 # The 5 solid colors and the 2 show-control primitives (Lock,
 # Return) are all exposed as button entities. HA light entities
@@ -233,9 +312,9 @@ display:
   - platform: mipi_rgb
     id: main_display
     model: ESP32-S3-TOUCH-LCD-7-800X480
-    # The preset pins reset + enable lines via the ch422g; they
-    # reference `ch422g: null` internally, which resolves to our
-    # io_expander above.
+    # Rotation is declared on the LVGL block below — the mipi_rgb
+    # display must be in its native orientation here; LVGL handles
+    # the rotated render.
 
 touchscreen:
   - platform: gt911
@@ -246,17 +325,386 @@ touchscreen:
       ch422g: io_expander
       number: 1
     display: main_display
+    # When `lvgl.rotation:` is active, LVGL rotates the incoming
+    # touch coordinates itself. Leaving a `transform:` here applies
+    # a second rotation on top, scrambling the mapping. Keep this
+    # in its default identity orientation.
     on_touch:
       - lambda: |-
           ESP_LOGI("touch", "x=%d y=%d id=%d",
                    touch.x, touch.y, touch.id);
 
-# Minimal LVGL block — with no `pages:` or top-level widgets, the
-# component auto-renders its built-in hello-world (spinner +
-# button + QR code + slider). That exercises the display pipeline
-# and the touch pipeline together, meeting both of #14's
-# acceptance criteria in one go. #15 replaces this with the real
-# UI.
+# ─── Phase 3 #15: LVGL main screen (HA-card style) ──────────────
+# Portrait 480×800. Layout mirrors Home Assistant's standard
+# light-entity card:
+#   - Title + current-state subtitle at top
+#   - Off/On switch widget (HA-style toggle)
+#   - "Color" section — 5 circular swatches matching the fixture's
+#     pure-primary LEDs
+#   - "Effect" section — dropdown with None + 7 show names
+#   - Bottom action row — Lock + Return
+# State sync via `light.on_state` reflects the entity's state into
+# the switch position, selected color ring, dropdown index, and
+# subtitle text — regardless of whether the change originated on
+# the screen, in HA, or from an automation.
+
 lvgl:
   displays: main_display
   touchscreens: pool_touch
+  # 90° CW rotation → USB edge at the bottom. Previously 270°
+  # rendered upside-down on this board's mount orientation.
+  # TEMPORARILY disabled to test the hypothesis that LVGL software
+  # rotation is causing the panel-refresh glitches via PSRAM-bus
+  # contention. Layout will look squashed / wrong-aspect in
+  # landscape — that's expected; we're just looking at panel
+  # stability.
+  # rotation: 90
+  # Tear-free recipe (combined with patched mipi_rgb num_fbs=2):
+  #   - buffer_size: 100% gives LVGL its own back-buffer matching
+  #     the rotated dimensions
+  #   - full_refresh: true forces a whole-screen render each tick
+  #     so the swap to the front framebuffer is atomic
+  # ESP-IDF's `esp_lcd_panel_draw_bitmap` with num_fbs=2 writes to
+  # the inactive framebuffer and swaps on vsync; pairing that with
+  # full-screen writes (no partial dirty regions) avoids
+  # mid-frame swap artefacts that show up as vertical scanline
+  # offsets.
+  buffer_size: 100%
+  full_refresh: true
+  bg_color: 0x0D0D14
+  text_color: 0xF0F0F0
+  theme:
+    button:
+      pressed:
+        bg_opa: 70%
+  pages:
+    - id: page_main
+      bg_color: 0x0D0D14
+      pad_all: 20
+      scrollable: false
+      layout:
+        type: flex
+        flex_flow: column
+        flex_align_main: start
+        flex_align_cross: center
+        pad_row: 16
+      widgets:
+
+        # ─── Header: title + current state ──────────────────────
+        - label:
+            text: "Pool Light"
+            text_font: montserrat_28
+            text_color: 0xF0F0F0
+        - label:
+            id: lbl_current
+            text: "Off"
+            text_font: montserrat_14
+            text_color: 0x888899
+
+        # ─── On/Off switch row ──────────────────────────────────
+        # Classic HA pattern: Off label · switch · On label.
+        - obj:
+            width: size_content
+            height: size_content
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: center
+              flex_align_cross: center
+              pad_column: 16
+            widgets:
+              - label:
+                  text: "Off"
+                  text_color: 0x888899
+                  text_font: montserrat_16
+              - switch:
+                  id: sw_power
+                  width: 80
+                  height: 40
+                  # Subtle track when off, amber when on — matches
+                  # HA's default light-entity accent.
+                  bg_color: 0x333344
+                  indicator:
+                    bg_color: 0x333344
+                    checked:
+                      bg_color: 0xFFBF1C
+                  on_value:
+                    - if:
+                        condition:
+                          lambda: 'return x;'
+                        then:
+                          - light.turn_on: pool_light
+                        else:
+                          - light.turn_off: pool_light
+              - label:
+                  text: "On"
+                  text_color: 0x888899
+                  text_font: montserrat_16
+
+        # ─── Divider ────────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 1
+            bg_color: 0x222233
+            bg_opa: cover
+            border_width: 0
+
+        # ─── Color section ──────────────────────────────────────
+        - label:
+            text: "Color"
+            text_font: montserrat_16
+            text_color: 0x888899
+            align: LEFT_MID
+        # 5 circular swatches in a row. Each is a checkable button
+        # with radius=36 for a perfect circle; active highlight is
+        # a white outline ring (amber on light-coloured swatches).
+        - obj:
+            width: 100%
+            height: 100
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: space_evenly
+              flex_align_cross: center
+            widgets:
+              - button:
+                  id: circle_blue
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0x0000FF
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x08);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_red
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0xFF0000
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0a);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_white
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0xFFFFFF
+                  bg_opa: cover
+                  border_width: 1
+                  border_color: 0x444455
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFBF1C
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0b);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_pink
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0xFF00FF
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0c);'
+                    - light.turn_on: {id: pool_light}
+
+              - button:
+                  id: circle_green
+                  width: 72
+                  height: 72
+                  radius: 36
+                  bg_color: 0x00FF00
+                  bg_opa: cover
+                  shadow_width: 8
+                  shadow_opa: 40%
+                  checkable: true
+                  checked:
+                    outline_width: 4
+                    outline_color: 0xFFFFFF
+                    outline_pad: 4
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x09);'
+                    - light.turn_on: {id: pool_light}
+
+        # ─── Divider ────────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 1
+            bg_color: 0x222233
+            bg_opa: cover
+            border_width: 0
+
+        # ─── Effect section ─────────────────────────────────────
+        - label:
+            text: "Effect"
+            text_font: montserrat_16
+            text_color: 0x888899
+            align: LEFT_MID
+        - dropdown:
+            id: dd_effect
+            width: 100%
+            height: 54
+            text_font: montserrat_18
+            bg_color: 0x1E1E28
+            border_color: 0x333344
+            border_width: 1
+            options:
+              - "None"
+              - "Nova"
+              - "Super Nova"
+              - "Northern Lights"
+              - "Tidal Wave"
+              - "Patriot Dream"
+              - "Desert Skies"
+              - "Peruvian Paradise"
+            # on_value fires with `x` = newly-selected index.
+            on_value:
+              - lambda: |-
+                  static const char *const names[] = {
+                      "", "Nova", "Super Nova", "Northern Lights",
+                      "Tidal Wave", "Patriot Dream", "Desert Skies",
+                      "Peruvian Paradise"};
+                  if (x == 0) {
+                    // "None" was picked — clear any active effect
+                    // but leave the on/off state alone.
+                    auto call = id(pool_light).turn_on();
+                    call.set_effect("None");
+                    call.perform();
+                  } else if (x >= 1 && x <= 7) {
+                    auto call = id(pool_light).turn_on();
+                    call.set_effect(names[x]);
+                    call.perform();
+                  }
+
+        # ─── Divider ────────────────────────────────────────────
+        - obj:
+            width: 100%
+            height: 1
+            bg_color: 0x222233
+            bg_opa: cover
+            border_width: 0
+
+        # ─── Bottom actions: Lock + Return ──────────────────────
+        - obj:
+            width: 100%
+            height: 80
+            pad_all: 0
+            bg_opa: transp
+            border_width: 0
+            scrollable: false
+            layout:
+              type: flex
+              flex_flow: row
+              flex_align_main: space_between
+              flex_align_cross: center
+              pad_column: 16
+            widgets:
+              - button:
+                  id: btn_lock
+                  width: 200
+                  height: 64
+                  radius: 12
+                  bg_color: 0x2A2A36
+                  bg_opa: cover
+                  shadow_width: 6
+                  shadow_opa: 30%
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0d);'
+                  widgets:
+                    - obj:
+                        width: size_content
+                        height: size_content
+                        pad_all: 0
+                        bg_opa: transp
+                        border_width: 0
+                        align: CENTER
+                        layout:
+                          type: flex
+                          flex_flow: row
+                          flex_align_cross: center
+                          pad_column: 10
+                        widgets:
+                          - label:
+                              text: "\uF023"  # LV_SYMBOL_LOCK
+                              text_font: montserrat_20
+                              text_color: 0xFFBF1C
+                          - label:
+                              text: "Lock"
+                              text_font: montserrat_18
+                              text_color: 0xF0F0F0
+              - button:
+                  id: btn_return
+                  width: 200
+                  height: 64
+                  radius: 12
+                  bg_color: 0x2A2A36
+                  bg_opa: cover
+                  shadow_width: 6
+                  shadow_opa: 30%
+                  on_click:
+                    - lambda: 'id(xg).send_effect_byte(0x0e);'
+                    - light.turn_on: {id: pool_light}
+                  widgets:
+                    - obj:
+                        width: size_content
+                        height: size_content
+                        pad_all: 0
+                        bg_opa: transp
+                        border_width: 0
+                        align: CENTER
+                        layout:
+                          type: flex
+                          flex_flow: row
+                          flex_align_cross: center
+                          pad_column: 10
+                        widgets:
+                          - label:
+                              text: "\uF0E2"  # LV_SYMBOL_UNDO / return-like
+                              text_font: montserrat_20
+                              text_color: 0x71CD2E
+                          - label:
+                              text: "Return"
+                              text_font: montserrat_18
+                              text_color: 0xF0F0F0
+
