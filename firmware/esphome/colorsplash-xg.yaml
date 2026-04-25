@@ -112,6 +112,19 @@ colorsplash_xg:
   # advertiser whose local name equals BGScripr.
   # mac_address: "AA:BB:CC:DD:EE:FF"
 
+# Tracks the last solid-colour byte the user picked (one of the
+# five swatches, or the Return byte). Used by the dropdown's
+# "None" handler to restore the prior solid colour after the user
+# leaves an effect — the fixture has no native concept of "stop
+# the effect, go back to whatever I was showing", so we replay
+# the last solid byte ourselves. Defaults to white so the very
+# first None tap on a fresh boot still does something sensible.
+globals:
+  - id: last_solid_byte
+    type: uint8_t
+    restore_value: no
+    initial_value: '0x0b'
+
 # HA-facing light entity (#11). on/off maps to the controller's
 # Standby byte; the 12 canonical effects (5 solids + 7 shows) are
 # auto-registered by the colorsplash_xg/light platform. Restore
@@ -286,16 +299,22 @@ sensor:
     update_interval: 30s
     lambda: 'return (float) id(xg).total_errors();'
 
-# Custom font for the Bluetooth status icon — bundled Montserrat
-# doesn't carry the FA Bluetooth glyph at usable sizes. Pull
-# Material Symbols Outlined from Google Fonts at compile time and
-# bake in only the single glyph we need (U+E1A7 = bluetooth).
+# Material Symbols icon fonts pulled at compile time from Google
+# Fonts via the `gfonts://` shorthand. Each font contains only the
+# specific glyphs we use, so binary footprint is tiny. Bundled
+# Montserrat doesn't carry these symbols at any size.
 font:
   - file: "gfonts://Material Symbols Outlined"
     id: icon_font_18
     size: 18
     glyphs:
-      - "\uE1A7"  # bluetooth
+      - "\uE1A7"  # bluetooth (status bar)
+  - file: "gfonts://Material Symbols Outlined"
+    id: icon_font_28
+    size: 28
+    glyphs:
+      - "\uE897"  # lock
+      - "\uE8B3"  # restore (Return)
 
 # ─── Phase 3 #17: status bar polling ────────────────────────────
 # Refreshes the four status-bar icons in the LVGL UI once per
@@ -595,8 +614,14 @@ lvgl:
         # a white outline ring (amber on light-coloured swatches).
         - obj:
             width: 100%
-            height: 100
-            pad_all: 0
+            height: 110
+            # Padding on all sides gives the active-swatch outline ring
+            # room to render without being clipped at the parent's edge
+            # (top, bottom, left, right).
+            pad_left: 12
+            pad_right: 12
+            pad_top: 10
+            pad_bottom: 10
             bg_opa: transp
             border_width: 0
             scrollable: false
@@ -608,45 +633,64 @@ lvgl:
             widgets:
               - button:
                   id: circle_blue
-                  width: 72
+                  # 78×72 with radius 39 compensates for the panel's
+                  # non-square pixel pitch after 90° rotation, so the
+                  # widget renders as a true circle on screen.
+                  width: 78
                   height: 72
-                  radius: 36
+                  radius: 39
                   bg_color: 0x0000FF
                   bg_opa: cover
                   shadow_width: 8
                   shadow_opa: 40%
                   checkable: true
                   checked:
+                    bg_color: 0x0000FF
+                    bg_opa: cover
                     outline_width: 4
                     outline_color: 0xFFFFFF
-                    outline_pad: 4
+                    outline_pad: 0
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x08);'
-                    - light.turn_on: {id: pool_light}
+                    # Send the BLE byte for the colour, remember it as
+                    # the last solid (so the dropdown's "None" handler
+                    # can replay it later), and snap the dropdown to
+                    # "None". We deliberately don't go through
+                    # `pool_light.turn_on().set_effect("None")` because
+                    # that triggers write_state, which writes the cached
+                    # (white) colour to the fixture and overrides our
+                    # solid-colour command — visible as a brief white flash.
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x08);
+                        id(last_solid_byte) = 0x08;
+                        id(dd_effect)->set_selected_index(0, LV_ANIM_OFF);
 
               - button:
                   id: circle_red
-                  width: 72
+                  width: 78
                   height: 72
-                  radius: 36
+                  radius: 39
                   bg_color: 0xFF0000
                   bg_opa: cover
                   shadow_width: 8
                   shadow_opa: 40%
                   checkable: true
                   checked:
+                    bg_color: 0xFF0000
+                    bg_opa: cover
                     outline_width: 4
                     outline_color: 0xFFFFFF
-                    outline_pad: 4
+                    outline_pad: 0
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0a);'
-                    - light.turn_on: {id: pool_light}
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x0a);
+                        id(last_solid_byte) = 0x0a;
+                        id(dd_effect)->set_selected_index(0, LV_ANIM_OFF);
 
               - button:
                   id: circle_white
-                  width: 72
+                  width: 78
                   height: 72
-                  radius: 36
+                  radius: 39
                   bg_color: 0xFFFFFF
                   bg_opa: cover
                   border_width: 1
@@ -655,48 +699,60 @@ lvgl:
                   shadow_opa: 40%
                   checkable: true
                   checked:
+                    bg_color: 0xFFFFFF
+                    bg_opa: cover
                     outline_width: 4
                     outline_color: 0xFFBF1C
-                    outline_pad: 4
+                    outline_pad: 0
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0b);'
-                    - light.turn_on: {id: pool_light}
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x0b);
+                        id(last_solid_byte) = 0x0b;
+                        id(dd_effect)->set_selected_index(0, LV_ANIM_OFF);
 
               - button:
                   id: circle_pink
-                  width: 72
+                  width: 78
                   height: 72
-                  radius: 36
+                  radius: 39
                   bg_color: 0xFF00FF
                   bg_opa: cover
                   shadow_width: 8
                   shadow_opa: 40%
                   checkable: true
                   checked:
+                    bg_color: 0xFF00FF
+                    bg_opa: cover
                     outline_width: 4
                     outline_color: 0xFFFFFF
-                    outline_pad: 4
+                    outline_pad: 0
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0c);'
-                    - light.turn_on: {id: pool_light}
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x0c);
+                        id(last_solid_byte) = 0x0c;
+                        id(dd_effect)->set_selected_index(0, LV_ANIM_OFF);
 
               - button:
                   id: circle_green
-                  width: 72
+                  width: 78
                   height: 72
-                  radius: 36
+                  radius: 39
                   bg_color: 0x00FF00
                   bg_opa: cover
                   shadow_width: 8
                   shadow_opa: 40%
                   checkable: true
                   checked:
+                    bg_color: 0x00FF00
+                    bg_opa: cover
                     outline_width: 4
                     outline_color: 0xFFFFFF
-                    outline_pad: 4
+                    outline_pad: 0
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x09);'
-                    - light.turn_on: {id: pool_light}
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x09);
+                        id(last_solid_byte) = 0x09;
+                        id(dd_effect)->set_selected_index(0, LV_ANIM_OFF);
 
         # ─── Divider ────────────────────────────────────────────
         - obj:
@@ -717,9 +773,11 @@ lvgl:
             width: 100%
             height: 54
             text_font: montserrat_18
+            text_color: 0xF0F0F0
             bg_color: 0x1E1E28
             border_color: 0x333344
             border_width: 1
+            selected_index: 0
             options:
               - "None"
               - "Nova"
@@ -730,22 +788,32 @@ lvgl:
               - "Desert Skies"
               - "Peruvian Paradise"
             # on_value fires with `x` = newly-selected index.
+            #
+            # For effect indices 1–7 we send the BLE byte directly
+            # rather than going through `pool_light.turn_on()
+            # .set_effect(...).perform()`. Going through LightCall
+            # triggers the light component's write_state, which
+            # re-asserts the cached color (white) alongside the
+            # effect change — visible as a brief white flash between
+            # one effect and the next. Direct BLE send avoids that
+            # round-trip; HA's effect attribute will catch up via the
+            # next indication echo.
             on_value:
               - lambda: |-
-                  static const char *const names[] = {
-                      "", "Nova", "Super Nova", "Northern Lights",
-                      "Tidal Wave", "Patriot Dream", "Desert Skies",
-                      "Peruvian Paradise"};
+                  // Dropdown index → BLE preset byte. Index 0 is
+                  // "None" (no entry; handled separately below).
+                  static const uint8_t bytes[] = {
+                      0x00, 0x07, 0x02, 0x03,
+                      0x04, 0x05, 0x06, 0x01};
                   if (x == 0) {
-                    // "None" was picked — clear any active effect
-                    // but leave the on/off state alone.
-                    auto call = id(pool_light).turn_on();
-                    call.set_effect("None");
-                    call.perform();
+                    // "None" — replay the last solid colour the user
+                    // had before they picked an effect. The fixture
+                    // has no native "stop effect" command; sending the
+                    // last-solid byte takes it out of effect mode and
+                    // back to the colour they were displaying.
+                    id(xg).send_effect_byte(id(last_solid_byte));
                   } else if (x >= 1 && x <= 7) {
-                    auto call = id(pool_light).turn_on();
-                    call.set_effect(names[x]);
-                    call.perform();
+                    id(xg).send_effect_byte(bytes[x]);
                   }
 
         # ─── Divider ────────────────────────────────────────────
@@ -780,30 +848,33 @@ lvgl:
                   bg_opa: cover
                   shadow_width: 6
                   shadow_opa: 30%
+                  # Flex layout directly on the button: no intermediate
+                  # obj wrapper means no child widget intercepts the tap
+                  # before it reaches the button's on_click handler.
+                  layout:
+                    type: flex
+                    flex_flow: row
+                    flex_align_main: center
+                    flex_align_cross: center
+                    pad_column: 10
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0d);'
+                    # Tapping Lock causes the fixture to display the
+                    # newly-locked colour immediately (same visible
+                    # effect as a Return). Record 0x0e (Return) as the
+                    # last solid so a later dropdown→None replays the
+                    # locked colour, matching what's on screen.
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x0d);
+                        id(last_solid_byte) = 0x0e;
                   widgets:
-                    - obj:
-                        width: size_content
-                        height: size_content
-                        pad_all: 0
-                        bg_opa: transp
-                        border_width: 0
-                        align: CENTER
-                        layout:
-                          type: flex
-                          flex_flow: row
-                          flex_align_cross: center
-                          pad_column: 10
-                        widgets:
-                          - label:
-                              text: "\uF023"  # LV_SYMBOL_LOCK
-                              text_font: montserrat_20
-                              text_color: 0xFFBF1C
-                          - label:
-                              text: "Lock"
-                              text_font: montserrat_18
-                              text_color: 0xF0F0F0
+                    - label:
+                        text: "\uE897"  # Material Symbols: lock
+                        text_font: icon_font_28
+                        text_color: 0xFFBF1C
+                    - label:
+                        text: "Lock"
+                        text_font: montserrat_18
+                        text_color: 0xF0F0F0
               - button:
                   id: btn_return
                   width: 200
@@ -813,29 +884,27 @@ lvgl:
                   bg_opa: cover
                   shadow_width: 6
                   shadow_opa: 30%
+                  layout:
+                    type: flex
+                    flex_flow: row
+                    flex_align_main: center
+                    flex_align_cross: center
+                    pad_column: 10
                   on_click:
-                    - lambda: 'id(xg).send_effect_byte(0x0e);'
-                    - light.turn_on: {id: pool_light}
+                    # Send Return byte; record it as the last solid so
+                    # a subsequent dropdown→None replays the same Return
+                    # (re-asserting the locked colour). Skip light.turn_on
+                    # to avoid the write_state white flash.
+                    - lambda: |-
+                        id(xg).send_effect_byte(0x0e);
+                        id(last_solid_byte) = 0x0e;
                   widgets:
-                    - obj:
-                        width: size_content
-                        height: size_content
-                        pad_all: 0
-                        bg_opa: transp
-                        border_width: 0
-                        align: CENTER
-                        layout:
-                          type: flex
-                          flex_flow: row
-                          flex_align_cross: center
-                          pad_column: 10
-                        widgets:
-                          - label:
-                              text: "\uF0E2"  # LV_SYMBOL_UNDO / return-like
-                              text_font: montserrat_20
-                              text_color: 0x71CD2E
-                          - label:
-                              text: "Return"
-                              text_font: montserrat_18
-                              text_color: 0xF0F0F0
+                    - label:
+                        text: "\uE8B3"  # Material Symbols: restore
+                        text_font: icon_font_28
+                        text_color: 0x71CD2E
+                    - label:
+                        text: "Return"
+                        text_font: montserrat_18
+                        text_color: 0xF0F0F0
 
