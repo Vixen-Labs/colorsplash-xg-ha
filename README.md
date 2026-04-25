@@ -135,10 +135,12 @@ the next person:
   show-scrub workaround (lock the fixture mid-show on the colour
   you want).
 - **BLE range is marginal through interior walls.** At the
-  display variant's wall-mount location the RSSI floats between
+  display variant's wall-mount location the RSSI floated between
   −88 and −95 dBm — at the edge of stable reconnect. This drove
   the pivot to the headless variant, which puts the ESP32 next to
-  the equipment pad where the link is solid.
+  the equipment pad. First measurement after the swap: **−67 dBm
+  steady** — about 25 dB better, or roughly 300× stronger
+  signal.
 
 ## Architecture
 
