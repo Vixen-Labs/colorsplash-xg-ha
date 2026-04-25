@@ -32,13 +32,40 @@ esp32:
   framework:
     type: esp-idf
     version: recommended
+    # Required for octal-PSRAM at 120 MHz (still flagged experimental
+    # upstream by Espressif; Waveshare's reference enables it
+    # explicitly).
+    advanced:
+      enable_idf_experimental_features: true
+    # Additional vendor-recommended sdkconfig values from Waveshare's
+    # official ESP-IDF reference (waveshareteam/ESP32-S3-Touch-LCD-7B
+    # example 13_LVGL_TRANSPLANT). Performance tunings that benefit
+    # RGB-panel + LVGL workloads.
+    #
+    # NOTE: Waveshare's reference also sets
+    # CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y, but that's specific to
+    # ESP-IDF's managed-components LVGL packaging. ESPHome uses a
+    # different LVGL packaging that doesn't define the corresponding
+    # macro under that Kconfig — enabling it produces compile
+    # errors. Skipped here.
+    sdkconfig_options:
+      CONFIG_FREERTOS_HZ: "1000"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: y
+      CONFIG_COMPILER_OPTIMIZATION_PERF: y
 
 # Waveshare ESP32-S3-Touch-LCD-7 ships with the N16R8 module: 8 MB
 # octal PSRAM at 80 MHz. Must be declared explicitly or Phase 3's LVGL
 # buffers will land in SRAM and blow the heap.
 psram:
   mode: octal
-  speed: 80MHz
+  # Vendor-recommended (Waveshare's sdkconfig.defaults uses
+  # CONFIG_SPIRAM_SPEED_120M=y). 50% faster PSRAM bus than 80MHz
+  # gives the RGB panel DMA enough margin against WiFi/BLE
+  # contention to eliminate scanline tearing. 120MHz is marked
+  # experimental in upstream ESP-IDF — the framework
+  # sdkconfig_options block above sets the required experimental
+  # flag.
+  speed: 120MHz
 
 logger:
   level: INFO
@@ -326,12 +353,24 @@ lvgl:
   touchscreens: pool_touch
   # 90° CW rotation → USB edge at the bottom. Previously 270°
   # rendered upside-down on this board's mount orientation.
-  rotation: 90
-  # Full-frame buffer in PSRAM — RGB parallel panels are
-  # continuously refreshed, so partial buffers tear visibly. With
-  # octal PSRAM we've got plenty of room (480×800×2 = 768 KB per
-  # buffer).
+  # TEMPORARILY disabled to test the hypothesis that LVGL software
+  # rotation is causing the panel-refresh glitches via PSRAM-bus
+  # contention. Layout will look squashed / wrong-aspect in
+  # landscape — that's expected; we're just looking at panel
+  # stability.
+  # rotation: 90
+  # Tear-free recipe (combined with patched mipi_rgb num_fbs=2):
+  #   - buffer_size: 100% gives LVGL its own back-buffer matching
+  #     the rotated dimensions
+  #   - full_refresh: true forces a whole-screen render each tick
+  #     so the swap to the front framebuffer is atomic
+  # ESP-IDF's `esp_lcd_panel_draw_bitmap` with num_fbs=2 writes to
+  # the inactive framebuffer and swaps on vsync; pairing that with
+  # full-screen writes (no partial dirty regions) avoids
+  # mid-frame swap artefacts that show up as vertical scanline
+  # offsets.
   buffer_size: 100%
+  full_refresh: true
   bg_color: 0x0D0D14
   text_color: 0xF0F0F0
   theme:
