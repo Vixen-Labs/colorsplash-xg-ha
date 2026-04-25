@@ -1,6 +1,6 @@
 # colorsplash-xg-ha
 
-Home Assistant control for the **J&J Electronics ColorSplash XG** pool
+Home Assistant control for the **Hayward / J&J Electronics ColorSplash XG** pool
 light controller (LPL-XG-CTRL-1) via an ESP32-S3 + LVGL touchscreen
 bridge that owns the BLE link and exposes the controller to HA through
 ESPHome's native API.
@@ -28,11 +28,87 @@ This project builds a permanently-online bridge:
 - A **local LVGL touchscreen UI** on the 7" display keeps working even
   if HA is offline. Every action on the screen drives the light
   directly.
-- A **time-boxed experiment** explores whether arbitrary RGB is
-  reachable beyond the factory 5 colors / 7 shows — with a practical
-  fallback (show-scrub) if direct RGB turns out to be impossible.
 
-Status: **planning complete, implementation tracked in GitHub issues**.
+<p align="center">
+  <img src="assets/colorsplash-xg-waveshare.jpg" alt="ColorSplash XG bridge running on a Waveshare ESP32-S3 7&quot; touchscreen, mounted on a wall and showing the LVGL UI: status bar, on/off switch, five colour swatches, effect dropdown, and Lock/Return buttons" width="420">
+  <br>
+  <sub>The bridge running on the wall — five preset colours, the effect dropdown, and Lock/Return for show-scrub control.</sub>
+</p>
+
+Status: **Phases 1–3 complete and shipping.** The bridge is on the
+wall, connected to HA, with the LVGL touchscreen UI fully usable
+standalone. Phase 4 (arbitrary RGB / show-scrub) and Phase 5
+(reliability + docs) are next.
+
+## Caveat Emptor
+
+This is a resource for those who may already own this light controller. I wish I had understood its limitations better before buying it, and I would absolutely not recommend it to anyone else. The built-in solid colors are unimaginative primary colors, there's no direct control over the RGB hue or brightness, and it's extremely expensive for what it offers. If you are used to LED bulbs with precise color control, you will be sorely disappointed.
+
+That said, if you already have this hardware, and are looking to make the best of it, read on…
+
+## What works today
+
+- **Continuous BLE link** to the LPL-XG-CTRL-1 with auto-reconnect,
+  exponential backoff, and BLE-stack reset after persistent failure
+  (Phase 2 #12). 72-hour soak test recorded **100% uptime, zero
+  watchdog reboots** ([`docs/SOAK_TEST.md`](docs/SOAK_TEST.md)).
+- **Home Assistant `light.pool_light`** entity exposing on/off
+  (Standby) and the 12 named effects (5 solids + 7 shows). Plus
+  diagnostic entities: RSSI, connected, last command, command
+  counter, error counter (Phase 2 #11, #13).
+- **Tear-free 7" RGB display** at 800×480 with concurrent BLE +
+  Wi-Fi, achieved via vendor-aligned PSRAM tuning + a patched local
+  `mipi_rgb` component ([`docs/WAVESHARE_LCD_TUNING.md`](docs/WAVESHARE_LCD_TUNING.md)).
+- **LVGL touchscreen UI** (Phase 3 #15, #17, #50):
+  - Status bar with Wi-Fi / HA-API / BLE indicators + 5-bar RSSI
+    meter.
+  - Single-tap on/off switch.
+  - Five circular colour swatches that drive the matching solid
+    preset; the active swatch shows a white outline.
+  - Effect dropdown for the seven shows; dropdown→None replays the
+    last solid colour the user displayed (or the locked colour, if
+    Lock was the last action).
+  - Lock + Return buttons that map to the controller's show-scrub
+    primitives.
+- **Standalone-capable** — every on-screen action drives the BLE
+  link directly, so the panel keeps working when Home Assistant is
+  unreachable ([`docs/STANDALONE_TEST.md`](docs/STANDALONE_TEST.md)).
+- **Stock-Lovelace card** for the HA dashboard side
+  ([`dashboard/colorsplash-xg.yaml`](dashboard/colorsplash-xg.yaml), Phase 2 #39).
+
+## What we had to work around
+
+A reasonable amount of this project's budget went to engineering
+around quirks of the pool controller. Notes for
+the next person:
+
+- **BLE-only, no documented protocol.** The controller has no Wi-Fi,
+  Z-Wave, Zigbee, or wired interface. There is no public protocol
+  doc. Phase 1 was an end-to-end reverse-engineering effort: Android
+  HCI snoop captures, APK decompile, nRF52840 sniffing, manual
+  decode → [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+- **One BLE master at a time.** Whenever the ESP32 holds the GATT
+  link, the official phone app cannot connect. This is fundamental
+  to BLE; the workaround is to just use the touchscreen or HA
+  instead of the app.
+- **No readable state.** The controller will not tell you what
+  colour or show it is currently displaying — only what command was
+  most recently sent. We cache the last preset byte locally and
+  treat it as the source of truth.
+- **No native "stop the effect" command.** To leave an effect and
+  return to a solid, you re-send a solid-colour byte. The bridge
+  synthesises this by remembering the last solid the user picked
+  and replaying it when the dropdown returns to "None" (issue #45).
+- **Fixed palette in fixture firmware.** Five solids + seven shows
+  is what the fixture supports. Arbitrary RGB requires the Phase 4b
+  show-scrub workaround (lock the fixture mid-show on the colour
+  you want).
+- **BLE range is marginal through interior walls.** At our install
+  location the RSSI floats between −88 and −95 dBm, which is at the
+  edge of stable reconnect. The contingency is a second ESP32 acting
+  as a BLE proxy near the equipment pad, with the LVGL UI remoted
+  to the wall via HA. Tracked separately as the "split-architecture"
+  path.
 
 ## Architecture
 
@@ -109,7 +185,7 @@ only — no `brightness`.
 
 ## Plan
 
-### Phase 0 — Scaffolding (1 issue)
+### Phase 0 — Scaffolding (1 issue) ✅
 
 - Repo layout (`docs/`, `firmware/esphome/`, `tools/`, `captures/`,
   `protocol/`)
@@ -117,7 +193,7 @@ only — no `brightness`.
 - Issue / PR templates
 - The plan document
 
-### Phase 1 — Reverse engineering (7 issues)
+### Phase 1 — Reverse engineering (7 issues) ✅
 
 1. Document Android HCI snoop capture procedure (Developer Options →
    Enable Bluetooth HCI snoop log → reproduce → pull
@@ -141,7 +217,7 @@ only — no `brightness`.
    command end-to-end against the real controller; ship-quality CLI so
    later phases can regression-test the protocol.
 
-### Phase 2 — ESPHome bridge, headless (5 issues)
+### Phase 2 — ESPHome bridge, headless (5 issues) ✅
 
 1. Waveshare ESP32-S3-Touch-LCD-7 base ESPHome config: board,
    PSRAM enable, Wi-Fi, OTA, native API, logger, captive portal
@@ -162,7 +238,7 @@ only — no `brightness`.
    leaving the device connected; log every disconnect and the time to
    reconnect.
 
-### Phase 3 — LVGL touchscreen UI (4 issues)
+### Phase 3 — LVGL touchscreen UI (4 issues) ✅
 
 1. ESPHome display + touch driver for the Waveshare 7": RGB parallel
    panel pins, GT911 I²C touch, LVGL buffer sizing in PSRAM.
