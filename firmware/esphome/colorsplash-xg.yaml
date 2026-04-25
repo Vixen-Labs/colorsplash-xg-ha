@@ -298,12 +298,10 @@ touchscreen:
       ch422g: io_expander
       number: 1
     display: main_display
-    # Touch coordinates must match the rotated display. For 270° CW
-    # rotation: swap X/Y axes and mirror one. If taps register in
-    # the wrong corner, toggle mirror_x vs mirror_y (or both).
-    transform:
-      swap_xy: true
-      mirror_y: true
+    # When `lvgl.rotation:` is active, LVGL rotates the incoming
+    # touch coordinates itself. Leaving a `transform:` here applies
+    # a second rotation on top, scrambling the mapping. Keep this
+    # in its default identity orientation.
     on_touch:
       - lambda: |-
           ESP_LOGI("touch", "x=%d y=%d id=%d",
@@ -326,7 +324,14 @@ touchscreen:
 lvgl:
   displays: main_display
   touchscreens: pool_touch
-  rotation: 270
+  # 90° CW rotation → USB edge at the bottom. Previously 270°
+  # rendered upside-down on this board's mount orientation.
+  rotation: 90
+  # Full-frame buffer in PSRAM — RGB parallel panels are
+  # continuously refreshed, so partial buffers tear visibly. With
+  # octal PSRAM we've got plenty of room (480×800×2 = 768 KB per
+  # buffer).
+  buffer_size: 100%
   bg_color: 0x0D0D14
   text_color: 0xF0F0F0
   theme:
