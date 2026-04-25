@@ -43,6 +43,42 @@ logger:
 api:
   encryption:
     key: !secret api_key
+  # Phase 4b show-scrub proof-of-concept: a single primitive
+  # exposed as a Home Assistant service. Sends `start_byte`,
+  # waits `wait_ms`, then sends Lock (0x0d). With a determinist-
+  # ic transition + fixed step duration per show, repeated calls
+  # to (start_byte, wait_ms) should land the fixture on the same
+  # colour each time. Used to validate that show-scrub is
+  # precise enough for an arbitrary-RGB picker (Phase 4b proper)
+  # before building the full RGB→(show, offset) mapping.
+  #
+  # For repeatability, normalise the from-state by sending
+  # Standby first and pausing ~3 s before scrub:
+  #
+  #   - service: button.press
+  #     target: { entity_id: button.pool_standby }   # if exposed
+  #   - delay: 3
+  #   - service: esphome.colorsplash_xg_bridge_pool_scrub
+  #     data: { start_byte: 5, wait_ms: 12000 }      # 0x05 = Patriot Dream
+  services:
+    - service: pool_scrub
+      variables:
+        start_byte: int
+        wait_ms: int
+      then:
+        - script.execute:
+            id: pool_scrub_seq
+            start_byte: !lambda 'return start_byte;'
+            wait_ms: !lambda 'return wait_ms;'
+    # Phase 4b calibration primitive — send a single arbitrary byte
+    # to the controller. Used by `tools/calibrate_show_colors.py`
+    # to drive the controller through Standby + every solid +
+    # every show without needing per-byte HA buttons.
+    - service: pool_send_byte
+      variables:
+        byte: int
+      then:
+        - lambda: 'id(xg).send_effect_byte((uint8_t) byte);'
 
 ota:
   - platform: esphome
@@ -332,3 +368,24 @@ sensor:
     accuracy_decimals: 0
     update_interval: 30s
     lambda: 'return (float) id(xg).total_errors();'
+
+# ─── Phase 4b PoC — show-scrub primitive ─────────────────────────
+# Triggered by the `pool_scrub` HA service defined under api.services
+# above. Sends a start byte, waits, then sends Lock (0x0d). Caller
+# manages from-state normalization (typically: send Standby, wait
+# ~3 s, then call this).
+script:
+  - id: pool_scrub_seq
+    parameters:
+      start_byte: int
+      wait_ms: int
+    then:
+      - lambda: |-
+          ESP_LOGI("scrub",
+                   "start: byte=0x%02x wait_ms=%d",
+                   (uint8_t) start_byte, wait_ms);
+          id(xg).send_effect_byte((uint8_t) start_byte);
+      - delay: !lambda 'return wait_ms;'
+      - lambda: |-
+          ESP_LOGI("scrub", "lock fire");
+          id(xg).send_effect_byte(0x0d);  // Lock
