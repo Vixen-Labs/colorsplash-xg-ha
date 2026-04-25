@@ -147,6 +147,121 @@ button:
     on_press:
       then:
         - lambda: 'id(xg).send_effect_byte(0x0e);'
+  # ─── Phase 4a probe (issue: arbitrary-RGB experiment) ────────
+  # Sends whichever byte the `text.pool_probe_hex` field holds,
+  # parsed as a hex string (with or without the `0x` prefix).
+  # Used to walk the unmapped opcode space (0x0f..0xff) looking
+  # for hidden palette entries, parameterised commands, or any
+  # behaviour the official app doesn't expose. Watch
+  # `text_sensor.pool_last_echo` for the controller's indication
+  # echo, and watch the fixture for visible response.
+  - platform: template
+    name: "Pool Probe — Send Byte"
+    icon: "mdi:flask-outline"
+    on_press:
+      then:
+        - lambda: |-
+            const std::string &s = id(pool_probe_hex).state;
+            const char *p = s.c_str();
+            if (s.size() >= 2 && p[0] == '0' &&
+                (p[1] == 'x' || p[1] == 'X')) {
+              p += 2;
+            }
+            char *end = nullptr;
+            unsigned long v = std::strtoul(p, &end, 16);
+            if (end == p) {
+              ESP_LOGW("probe",
+                       "could not parse '%s' as hex — skipping",
+                       s.c_str());
+              return;
+            }
+            if (v > 0xff) {
+              ESP_LOGW("probe",
+                       "value 0x%lx > 0xff, masking to low byte",
+                       v);
+              v &= 0xff;
+            }
+            id(xg).send_effect_byte((uint8_t) v);
+  # Multi-byte raw probe. Sends whatever sequence
+  # `text.pool_probe_bytes_hex` contains, parsed as a stream of
+  # hex byte tokens (whitespace, commas, and per-token `0x`
+  # prefixes are all optional; "ff 00 80", "ff,00,80" and
+  # "ff0080" all produce {0xff, 0x00, 0x80}). Calls the
+  # component's probe_write_raw() escape hatch which bypasses the
+  # single-byte queue. Up to 20 bytes (BLE MTU 23 minus 3-byte
+  # ATT Write Request header).
+  - platform: template
+    name: "Pool Probe — Send Bytes"
+    icon: "mdi:flask-empty-plus-outline"
+    on_press:
+      then:
+        - lambda: |-
+            // Parse the user's hex stream into bytes. Strategy:
+            // walk the string, skip non-hex separators, skip "0x"
+            // / "0X" prefixes, then pair consecutive hex digits.
+            // "ff 00 80", "0xff,0x00,0x80" and "ff0080" all yield
+            // {0xff, 0x00, 0x80}.
+            const std::string &s = id(pool_probe_bytes_hex).state;
+            std::string digits;
+            for (size_t i = 0; i < s.size(); i++) {
+              char c = s[i];
+              if (c == '0' && i + 1 < s.size() &&
+                  (s[i+1] == 'x' || s[i+1] == 'X')) {
+                i++;  // skip the 'x'/'X' too
+                continue;
+              }
+              if (std::isxdigit((unsigned char) c)) {
+                digits += c;
+              }
+            }
+            std::vector<uint8_t> bytes;
+            for (size_t j = 0; j < digits.size(); j += 2) {
+              char pair[3] = {digits[j], 0, 0};
+              if (j + 1 < digits.size()) {
+                pair[1] = digits[j + 1];
+              }
+              bytes.push_back(
+                  (uint8_t) std::strtoul(pair, nullptr, 16));
+            }
+            if (bytes.empty()) {
+              ESP_LOGW("probe",
+                       "no parseable hex bytes in '%s'", s.c_str());
+              return;
+            }
+            id(xg).probe_write_raw(bytes);
+
+# ─── Phase 4a probe input ────────────────────────────────────────
+# Hex string for the byte to probe. Accepts "0f", "0x0f", "FF",
+# etc. — case-insensitive, optional `0x` prefix. ESPHome's
+# `number:` platform only exposes a float input which made the
+# user mentally translate decimal↔hex; a text field keeps the
+# value in the same base as the rest of the protocol notes.
+text:
+  - platform: template
+    name: "Pool Probe Byte (hex)"
+    id: pool_probe_hex
+    initial_value: "0f"
+    mode: text
+    optimistic: true
+    restore_value: false
+    min_length: 1
+    max_length: 4
+  # Multi-byte raw probe input. Up to ~20 bytes (BLE MTU 23 minus
+  # the 3-byte ATT Write Request header). Free-form: spaces,
+  # commas, and per-token `0x` prefixes are all optional. Default
+  # `08 00 00` writes Parisian Blue (0x08) plus two zero bytes —
+  # if the controller is strict-1-byte it'll just play Parisian
+  # Blue; if it accepts parameterised commands we'll know from
+  # the visible result diverging.
+  - platform: template
+    name: "Pool Probe Bytes (hex)"
+    id: pool_probe_bytes_hex
+    initial_value: "08 00 00"
+    mode: text
+    optimistic: true
+    restore_value: false
+    min_length: 1
+    max_length: 80
 
 # Watchdog surface for HA (#12). The binary_sensor mirrors the BLE
 # client's connected() state so HA can flag a disconnected fixture
@@ -171,6 +286,21 @@ text_sensor:
     id: pool_last_command
     update_interval: 15s
     lambda: 'return id(xg).last_command_name();'
+  # Phase 4a probe: surfaces the controller's most recent
+  # indication echo — the authoritative "command accepted" signal
+  # per PROTOCOL.md §Controller-to-central indications. Useful for
+  # confirming whether an unmapped byte is silently dropped vs.
+  # acknowledged, independent of any visible fixture response.
+  - platform: template
+    name: "Pool Last Echo"
+    id: pool_last_echo
+    update_interval: 5s
+    lambda: |-
+      auto e = id(xg).last_echoed_byte();
+      if (!e.has_value()) return std::string("(none)");
+      char buf[16];
+      std::snprintf(buf, sizeof(buf), "0x%02x", *e);
+      return std::string(buf);
 
 # Numeric diagnostics (#13). RSSI is polled every 30 s while
 # connected; the two counters are monotonic-within-session totals

@@ -58,6 +58,16 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
 
   // Public API — used by YAML lambdas and the light entity in #11.
   void send_effect_byte(uint8_t byte_value);
+
+  // Phase 4a probe escape hatch: write an arbitrary byte sequence
+  // to the command characteristic, bypassing the single-byte queue.
+  // Intended only for the RGB-experiment workflow (multi-byte
+  // writes to test whether the controller accepts parameterised
+  // commands). Drops the request if the link is not ready or a
+  // previous write is still in flight; logs the byte sequence at
+  // INFO level so probe runs are reproducible from the log.
+  void probe_write_raw(const std::vector<uint8_t> &bytes);
+
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
 
