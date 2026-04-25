@@ -1,0 +1,204 @@
+---
+# ColorSplash XG → ESPHome bridge, headless variant.
+#
+# Targets a plain ESP32-WROOM-32 dev board placed near the
+# equipment pad, where BLE link margin to the LPL-XG-CTRL-1 is
+# strong. There's no display — the user-facing UI lives in Home
+# Assistant (see ../../dashboard/colorsplash-xg.yaml for the
+# stock-Lovelace card).
+#
+# Includes everything from the display variant except the LVGL
+# UI, the RGB/touch panel, and the S3-specific PSRAM/IDF
+# tunings. Shares the custom `colorsplash_xg` BLE component.
+#
+# For the touchscreen variant (Waveshare ESP32-S3-Touch-LCD-7),
+# see colorsplash-xg-display.yaml or check out the v0.1.0-display
+# tag.
+#
+# See firmware/esphome/README.md for setup and flashing steps.
+
+substitutions:
+  device_name: colorsplash-xg-bridge
+  friendly_name: ColorSplash XG Bridge
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+
+esp32:
+  # Plain ESP32-WROOM-32 dev kit. ESPHome's default `arduino`
+  # framework is fine here — `ble_client` + Wi-Fi + native API +
+  # the custom `colorsplash_xg` component all build cleanly
+  # without any IDF-specific options.
+  board: esp32dev
+  # Standard WROOM-32 modules ship 4 MB. Some carry 8 or 16 MB —
+  # adjust if `esptool flash_id` reports differently.
+  flash_size: 4MB
+
+logger:
+  level: INFO
+  baud_rate: 115200
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret fallback_ap_password
+
+# Captive portal on the fallback AP so a phone can configure Wi-Fi
+# if the primary network is unreachable.
+captive_portal:
+
+# ColorSplash XG custom component (issue #10). Scans for the
+# controller's advertised local name "BGScripr" and auto-connects.
+# Component source lives in ./components/colorsplash_xg/.
+external_components:
+  - source:
+      type: local
+      path: components
+
+esp32_ble_tracker:
+
+colorsplash_xg:
+  id: xg
+  # Optional override for environments with multiple BGScripr
+  # peripherals in range (uncommon). When unset, we match the first
+  # advertiser whose local name equals BGScripr.
+  # mac_address: "AA:BB:CC:DD:EE:FF"
+
+# HA-facing light entity (#11). on/off maps to the controller's
+# Standby byte; the 12 canonical effects (5 solids + 7 shows) are
+# auto-registered by the colorsplash_xg/light platform. Restore
+# to OFF on boot — the fixture's true state isn't readable, so we
+# don't pretend to restore the effect; the user re-selects on use.
+#
+# No `on_state:` lambda here — the display variant uses one to
+# update LVGL widget styles, but the headless variant has no
+# widgets. HA gets fixture-state updates via the colorsplash_xg
+# component's normal indication-echo path.
+light:
+  - platform: colorsplash_xg
+    colorsplash_xg_id: xg
+    id: pool_light
+    name: "Pool Light"
+    restore_mode: ALWAYS_OFF
+
+# The 5 solid colors and the 2 show-control primitives (Lock,
+# Return) are all exposed as button entities. HA light entities
+# can't constrain their color picker to a discrete palette, so
+# buttons give a 1:1 mapping to the fixture's real presets and
+# avoid the impedance mismatch of HA's 8-swatch default palette
+# being shown for a light with only 5 colors. The dashboard card
+# groups these together visually.
+button:
+  # Solid colors — send the effect byte directly.
+  - platform: template
+    name: "Pool Parisian Blue"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x08);'
+  - platform: template
+    name: "Pool Brazilian Red"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0a);'
+  - platform: template
+    name: "Pool Arctic White"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0b);'
+  - platform: template
+    name: "Pool Miami Pink"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0c);'
+  - platform: template
+    name: "Pool New Zealand Green"
+    icon: "mdi:palette"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x09);'
+  # Show-control primitives — act on the controller's internal
+  # "last locked" slot. Lock captures current displayed color;
+  # Return replays it.
+  - platform: template
+    name: "Pool Lock"
+    icon: "mdi:lock"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0d);'
+  - platform: template
+    name: "Pool Return"
+    icon: "mdi:restore"
+    on_press:
+      then:
+        - lambda: 'id(xg).send_effect_byte(0x0e);'
+
+# Watchdog surface for HA (#12). The binary_sensor mirrors the BLE
+# client's connected() state so HA can flag a disconnected fixture
+# in automations / dashboards; the text_sensor exposes the most
+# recent BLE error so the user has immediate feedback without
+# having to open the ESPHome logs.
+binary_sensor:
+  - platform: template
+    name: "Pool BLE Connected"
+    id: pool_ble_connected
+    device_class: connectivity
+    lambda: 'return id(xg).connected();'
+
+text_sensor:
+  - platform: template
+    name: "Pool Last BLE Error"
+    id: pool_last_ble_error
+    update_interval: 15s
+    lambda: 'return id(xg).last_error();'
+  - platform: template
+    name: "Pool Last Command"
+    id: pool_last_command
+    update_interval: 15s
+    lambda: 'return id(xg).last_command_name();'
+
+# Numeric diagnostics (#13). RSSI is polled every 30 s while
+# connected; the two counters are monotonic-within-session totals
+# that reset on reboot.
+sensor:
+  - platform: template
+    name: "Pool BLE RSSI"
+    id: pool_ble_rssi
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      int8_t v = id(xg).last_rssi();
+      if (v == 0) return NAN;  // 0 = not yet queried / disconnected
+      return (float) v;
+  - platform: template
+    name: "Pool Command Count"
+    id: pool_command_count
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: 'return (float) id(xg).total_commands();'
+  - platform: template
+    name: "Pool Error Count"
+    id: pool_error_count
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: 'return (float) id(xg).total_errors();'

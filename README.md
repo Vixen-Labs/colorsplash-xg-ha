@@ -1,44 +1,50 @@
 # colorsplash-xg-ha
 
-Home Assistant control for the **Hayward / J&J Electronics ColorSplash XG** pool
-light controller (LPL-XG-CTRL-1) via an ESP32-S3 + LVGL touchscreen
-bridge that owns the BLE link and exposes the controller to HA through
-ESPHome's native API.
+Home Assistant control for the **Hayward / J&J Electronics
+ColorSplash XG** pool light controller (LPL-XG-CTRL-1) via a
+small ESP32 BLE bridge. Two variants ship: a primary **headless
+bridge** that puts the user-facing UI in Home Assistant, and a
+**display variant** with a 7" LVGL touchscreen on the wall
+(preserved at tag `v0.1.0-display`).
 
 ## Purpose
 
-The ColorSplash XG controller only ships with iOS and Android phone apps
-to control it over Bluetooth — and Bluetooth only; there's no Wi-Fi,
-Zigbee, Z-Wave, or local wired interface. That makes it a black box from
-Home Assistant's point of view, and it forces the homeowner to keep
-unlocking a phone and walking into range every time they want to change
-the pool color.
+The ColorSplash XG controller only ships with iOS and Android
+phone apps to control it over Bluetooth — and Bluetooth only;
+there's no Wi-Fi, Zigbee, Z-Wave, or local wired interface. That
+makes it a black box from Home Assistant's point of view, and it
+forces the homeowner to keep unlocking a phone and walking into
+range every time they want to change the pool color.
 
 This project builds a permanently-online bridge:
 
-- A **Waveshare ESP32-S3-Touch-LCD-7** (7" 800×480 capacitive touchscreen
-  on an ESP32-S3 with PSRAM and BLE 5) is installed on an indoor wall
-  within BLE range of the equipment pad.
-- The ESP32 holds a **continuous BLE GATT connection** to the controller
-  24/7, replacing the phone app entirely. It auto-reconnects on any
-  dropout.
-- The ESP32 **exposes the controller to Home Assistant** as a Light
-  entity (plus diagnostic entities) using ESPHome's native API over the
-  LAN — no cloud, no custom Python integration, no MQTT required.
-- A **local LVGL touchscreen UI** on the 7" display keeps working even
-  if HA is offline. Every action on the screen drives the light
-  directly.
+- A small **ESP32 dev board** placed within BLE range of the
+  equipment pad holds a continuous BLE GATT connection to the
+  controller 24/7, replacing the phone app entirely. It
+  auto-reconnects on any dropout.
+- The ESP32 **exposes the controller to Home Assistant** as a
+  Light entity (plus diagnostic entities) using ESPHome's native
+  API over the LAN — no cloud, no custom Python integration, no
+  MQTT required.
+- A **stock-Lovelace HA card** (in
+  [`dashboard/colorsplash-xg.yaml`](dashboard/colorsplash-xg.yaml))
+  drives the light from any device that can reach Home Assistant.
+- For owners who want a wall-mounted local touchscreen instead,
+  the historical [display variant](#display-variant) runs the
+  bridge on a Waveshare 7" ESP32-S3 touch panel with a full LVGL
+  UI. It's preserved at tag `v0.1.0-display` and is still
+  functional, but is no longer the primary path.
 
 <p align="center">
   <img src="assets/colorsplash-xg-waveshare.jpg" alt="ColorSplash XG bridge running on a Waveshare ESP32-S3 7&quot; touchscreen, mounted on a wall and showing the LVGL UI: status bar, on/off switch, five colour swatches, effect dropdown, and Lock/Return buttons" width="420">
   <br>
-  <sub>The bridge running on the wall — five preset colours, the effect dropdown, and Lock/Return for show-scrub control.</sub>
+  <sub>The display variant on the wall — the headless variant has no UI of its own and is just a small ESP32 next to the equipment pad.</sub>
 </p>
 
-Status: **Phases 1–3 complete and shipping.** The bridge is on the
-wall, connected to HA, with the LVGL touchscreen UI fully usable
-standalone. Phase 4 (arbitrary RGB / show-scrub) and Phase 5
-(reliability + docs) are next.
+Status: **Phases 1–3 complete and shipping.** Both variants run
+the same BLE protocol and expose the same HA entities. The pivot
+to the headless variant is in progress; the display variant
+remains usable but is no longer the focus.
 
 ## Caveat Emptor
 
@@ -48,33 +54,58 @@ That said, if you already have this hardware, and are looking to make the best o
 
 ## What works today
 
-- **Continuous BLE link** to the LPL-XG-CTRL-1 with auto-reconnect,
-  exponential backoff, and BLE-stack reset after persistent failure
-  (Phase 2 #12). 72-hour soak test recorded **100% uptime, zero
-  watchdog reboots** ([`docs/SOAK_TEST.md`](docs/SOAK_TEST.md)).
+### Bridge core (both variants)
+
+- **Continuous BLE link** to the LPL-XG-CTRL-1 with
+  auto-reconnect, exponential backoff, and BLE-stack reset after
+  persistent failure (Phase 2 #12). 72-hour soak test recorded
+  **100% uptime, zero watchdog reboots**
+  ([`docs/SOAK_TEST.md`](docs/SOAK_TEST.md)).
 - **Home Assistant `light.pool_light`** entity exposing on/off
   (Standby) and the 12 named effects (5 solids + 7 shows). Plus
   diagnostic entities: RSSI, connected, last command, command
   counter, error counter (Phase 2 #11, #13).
+- **Stock-Lovelace card** for the HA dashboard side
+  ([`dashboard/colorsplash-xg.yaml`](dashboard/colorsplash-xg.yaml),
+  Phase 2 #39).
+- **Reverse-engineered protocol** documented in
+  [`docs/PROTOCOL.md`](docs/PROTOCOL.md), with a `bleak`-based
+  Python reference client in `tools/cli.py`.
+
+### Headless variant (primary, current)
+
+- ESPHome config: [`firmware/esphome/colorsplash-xg-headless.yaml`](firmware/esphome/colorsplash-xg-headless.yaml).
+- Targets a plain ESP32-WROOM-32 dev kit placed near the equipment
+  pad for best BLE link margin.
+- No display, no LVGL — Home Assistant is the user-facing UI via
+  the dashboard card above.
+
+### Display variant
+
+- ESPHome config: [`firmware/esphome/colorsplash-xg-display.yaml`](firmware/esphome/colorsplash-xg-display.yaml).
+  Frozen snapshot at tag
+  [`v0.1.0-display`](https://github.com/swizzlevixen/colorsplash-xg-ha/releases/tag/v0.1.0-display).
+- Targets the Waveshare ESP32-S3-Touch-LCD-7 (7" 800×480 RGB
+  panel + GT911 touch + ESP32-S3-WROOM-1).
 - **Tear-free 7" RGB display** at 800×480 with concurrent BLE +
-  Wi-Fi, achieved via vendor-aligned PSRAM tuning + a patched local
-  `mipi_rgb` component ([`docs/WAVESHARE_LCD_TUNING.md`](docs/WAVESHARE_LCD_TUNING.md)).
+  Wi-Fi, achieved via vendor-aligned PSRAM tuning + a patched
+  local `mipi_rgb` component
+  ([`docs/WAVESHARE_LCD_TUNING.md`](docs/WAVESHARE_LCD_TUNING.md)).
 - **LVGL touchscreen UI** (Phase 3 #15, #17, #50):
   - Status bar with Wi-Fi / HA-API / BLE indicators + 5-bar RSSI
     meter.
   - Single-tap on/off switch.
   - Five circular colour swatches that drive the matching solid
     preset; the active swatch shows a white outline.
-  - Effect dropdown for the seven shows; dropdown→None replays the
-    last solid colour the user displayed (or the locked colour, if
-    Lock was the last action).
+  - Effect dropdown for the seven shows; dropdown→None replays
+    the last solid colour the user displayed (or the locked
+    colour, if Lock was the last action).
   - Lock + Return buttons that map to the controller's show-scrub
     primitives.
 - **Standalone-capable** — every on-screen action drives the BLE
   link directly, so the panel keeps working when Home Assistant is
-  unreachable ([`docs/STANDALONE_TEST.md`](docs/STANDALONE_TEST.md)).
-- **Stock-Lovelace card** for the HA dashboard side
-  ([`dashboard/colorsplash-xg.yaml`](dashboard/colorsplash-xg.yaml), Phase 2 #39).
+  unreachable
+  ([`docs/STANDALONE_TEST.md`](docs/STANDALONE_TEST.md)).
 
 ## What we had to work around
 
@@ -103,19 +134,24 @@ the next person:
   is what the fixture supports. Arbitrary RGB requires the Phase 4b
   show-scrub workaround (lock the fixture mid-show on the colour
   you want).
-- **BLE range is marginal through interior walls.** At our install
-  location the RSSI floats between −88 and −95 dBm, which is at the
-  edge of stable reconnect. The contingency is a second ESP32 acting
-  as a BLE proxy near the equipment pad, with the LVGL UI remoted
-  to the wall via HA. Tracked separately as the "split-architecture"
-  path.
+- **BLE range is marginal through interior walls.** At the
+  display variant's wall-mount location the RSSI floats between
+  −88 and −95 dBm — at the edge of stable reconnect. This drove
+  the pivot to the headless variant, which puts the ESP32 next to
+  the equipment pad where the link is solid.
 
 ## Architecture
 
 ```
-[J&J LPL-XG-CTRL-1] ──BLE GATT (single client)──► [Waveshare ESP32-S3 7" + LVGL] ──ESPHome native API / LAN──► [Home Assistant]
-                                                        │
-                                                        └── local 7" touchscreen UI (standalone-capable)
+                                   ┌── Headless variant (primary) ──┐
+                                   │  Small ESP32 near the pad       │
+[J&J LPL-XG-CTRL-1] ──BLE GATT────►│  (esp32dev / WROOM-32)          │──ESPHome native API──► [Home Assistant ──► Lovelace card / app]
+                                   └────────────────────────────────┘
+                                   ┌── Display variant ─────────────┐
+                                   │  Waveshare ESP32-S3-Touch-LCD-7 │──ESPHome native API──► [Home Assistant]
+                                   │  + LVGL UI on the wall          │
+                                   │  (standalone-capable)           │
+                                   └────────────────────────────────┘
 ```
 
 ## Established facts
@@ -125,9 +161,9 @@ the next person:
 | Controller | J&J Electronics LPL-XG-CTRL-1 (Bluetooth) |
 | Controller power | 120 VAC, 60 Hz, 400 W max load |
 | Fixture | XG pool/spa RGB (preset palette in fixture firmware) |
-| Bridge hardware | Waveshare ESP32-S3-Touch-LCD-7 (7" 800×480 RGB parallel, GT911 cap touch, PSRAM, BLE 5) |
+| Bridge hardware (headless) | ESP32-WROOM-32 dev kit (`esp32dev`), placed near the equipment pad |
+| Bridge hardware (display) | Waveshare ESP32-S3-Touch-LCD-7 (7" 800×480 RGB parallel, GT911 cap touch, PSRAM, BLE 5) |
 | HA location | Same LAN as the ESP32 |
-| Install location | Indoor wall near the equipment pad |
 | BLE exclusivity | ESP32 owns the link 24/7; phone app cannot connect while ESP32 is connected |
 | Capture tools | Android HCI snoop, iOS via macOS PacketLogger, nRF52840 USB dongle (on hand) |
 
@@ -299,8 +335,9 @@ blackout-on-state-change provides a deterministic sync signal.
 - `docs/PROTOCOL.md` — discovered BLE protocol
 - `docs/HARDWARE.md` — wiring, photos, install
 - `docs/RGB_EXPERIMENT.md` — what we tried and what worked
-- `firmware/esphome/colorsplash-xg.yaml` — main config
-- `firmware/esphome/components/colorsplash_xg/` — custom component
+- `firmware/esphome/colorsplash-xg-headless.yaml` — primary, headless ESP32 bridge
+- `firmware/esphome/colorsplash-xg-display.yaml` — display variant (tag `v0.1.0-display`)
+- `firmware/esphome/components/colorsplash_xg/` — custom component (shared)
 - `tools/cli.py` — bleak-based reference client
 - `captures/` — gitignored, except a README explaining how to reproduce
 
@@ -316,9 +353,11 @@ blackout-on-state-change provides a deterministic sync signal.
 ## Repository layout
 
 ```
-docs/          # PLAN.md, PROTOCOL.md, HARDWARE.md, RGB_EXPERIMENT.md
+assets/        # README image(s)
+dashboard/     # HA Lovelace card YAML
+docs/          # PLAN.md, PROTOCOL.md, SOAK_TEST.md, STANDALONE_TEST.md, WAVESHARE_LCD_TUNING.md, …
 firmware/
-  esphome/     # colorsplash-xg.yaml + custom component
+  esphome/     # colorsplash-xg-headless.yaml + colorsplash-xg-display.yaml + components/
 tools/         # bleak-based CLI and protocol utilities
 captures/      # gitignored; README-only stub tracks the procedure
 protocol/      # machine-readable protocol artifacts (JSON/YAML)
