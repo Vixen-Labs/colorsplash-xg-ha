@@ -56,6 +56,17 @@ SHOW_BYTES = {
     "Peruvian Paradise": 0x01,
 }
 
+# Solid colours — single byte, no scrub needed. Always preferred
+# over a show-scrub when their distance is competitive: deterministic,
+# no transition timing, no Lock needed.
+SOLID_BYTES = {
+    "Parisian Blue": 0x08,
+    "Brazilian Red": 0x0a,
+    "Arctic White": 0x0b,
+    "Miami Pink": 0x0c,
+    "New Zealand Green": 0x09,
+}
+
 
 def parse_rgb(s: str) -> tuple[int, int, int]:
     parts = [p.strip() for p in s.split(",")]
@@ -87,15 +98,48 @@ def distance(a: tuple[int, int, int],
 def find_matches(target: tuple[int, int, int],
                  dataset: dict,
                  skip_ms: int,
-                 top_n: int) -> list[dict]:
-    """Search every show sample whose t_ms >= skip_ms, return top_n
-    candidates ranked by RGB distance, each as a dict with show name,
-    t_ms, observed RGB, distance, and start_byte."""
-    candidates: list[tuple[float, str, int, list[int]]] = []
+                 top_n: int,
+                 solid_preference: float = 30.0) -> list[dict]:
+    """Search every solid + show sample, return top_n candidates
+    ranked by RGB distance.
+
+    Each candidate dict has:
+      kind            "solid" or "show"
+      name            human label
+      start_byte      the byte to send to the controller
+      wait_ms         None for solids; integer offset for shows
+      rgb             observed RGB at this candidate
+      distance        true Euclidean distance to target
+      effective_dist  distance used for ranking (solids get
+                      `solid_preference` subtracted to bias them
+                      over close-but-not-clearly-better show
+                      samples — shows are inherently jittery in
+                      timing so a deterministic solid is preferred
+                      when results are similar)
+
+    Solids are always single-entry; for the picker they're a
+    deterministic single-byte command (no scrub, no Lock).
+    """
+    candidates: list[dict] = []
+
+    # ---- Solids ----
+    for name, rgb in dataset.get("solids", {}).items():
+        if name not in SOLID_BYTES:
+            continue
+        d = distance(target, rgb)
+        candidates.append({
+            "distance": d,
+            "effective_dist": max(0.0, d - solid_preference),
+            "kind": "solid",
+            "name": name,
+            "start_byte": SOLID_BYTES[name],
+            "wait_ms": None,
+            "rgb": rgb,
+        })
+
+    # ---- Show samples ----
     for show_name, samples in dataset.get("shows", {}).items():
-        # Guard against any non-base shows like "Patriot Dream #1"
-        # that came from replay_probe — match the *base* show name to
-        # SHOW_BYTES, skipping anything we don't recognise.
+        # Replay-mode-aware: collapse "<show> #N" to its base name.
         base = show_name.split(" #")[0]
         if base not in SHOW_BYTES:
             continue
@@ -103,32 +147,39 @@ def find_matches(target: tuple[int, int, int],
             if s["t_ms"] < skip_ms:
                 continue
             d = distance(target, s["rgb"])
-            candidates.append((d, show_name, s["t_ms"], s["rgb"]))
-    candidates.sort(key=lambda c: c[0])
-    return [
-        {
-            "distance": d,
-            "show": show_name,
-            "start_byte": SHOW_BYTES[show_name.split(" #")[0]],
-            "wait_ms": t_ms,
-            "rgb": rgb,
-        }
-        for d, show_name, t_ms, rgb in candidates[:top_n]
-    ]
+            candidates.append({
+                "distance": d,
+                "effective_dist": d,
+                "kind": "show",
+                "name": show_name,
+                "start_byte": SHOW_BYTES[base],
+                "wait_ms": s["t_ms"],
+                "rgb": s["rgb"],
+            })
+
+    candidates.sort(key=lambda c: c["effective_dist"])
+    return candidates[:top_n]
 
 
 def format_match(m: dict) -> str:
     rgb = m["rgb"]
-    return (f"  {m['show']:22s}  start_byte=0x{m['start_byte']:02x}  "
-            f"wait_ms={m['wait_ms']:6d}  observed RGB=({rgb[0]:3d}, "
-            f"{rgb[1]:3d}, {rgb[2]:3d})  distance={m['distance']:5.1f}")
+    rgb_s = f"({rgb[0]:3d}, {rgb[1]:3d}, {rgb[2]:3d})"
+    if m["kind"] == "solid":
+        return (f"  [solid] {m['name']:22s}  "
+                f"send_byte=0x{m['start_byte']:02x}  "
+                f"observed RGB={rgb_s}  distance={m['distance']:5.1f}")
+    wait = m["wait_ms"] if m["wait_ms"] is not None else 0
+    return (f"  [show ] {m['name']:22s}  "
+            f"start_byte=0x{m['start_byte']:02x}  "
+            f"wait_ms={wait:6d}  observed RGB={rgb_s}  "
+            f"distance={m['distance']:5.1f}")
 
 
 async def send_via_bridge(host: str, port: int, noise_psk: str,
-                          start_byte: int, wait_ms: int) -> None:
-    """Call the bridge's pool_scrub service to actually display the
-    match. The bridge sends start_byte, waits wait_ms, then sends
-    Lock (0x0d)."""
+                          match: dict) -> None:
+    """Drive the bridge to display `match`. Solids use the simpler
+    `pool_send_byte` (deterministic, no Lock). Shows use `pool_scrub`
+    which sends start_byte, waits wait_ms, then sends Lock."""
     try:
         from aioesphomeapi import APIClient
     except ImportError as exc:
@@ -140,16 +191,32 @@ async def send_via_bridge(host: str, port: int, noise_psk: str,
     await api.connect(login=True)
     try:
         _, services = await api.list_entities_services()
-        svc = next((s for s in services if s.name == "pool_scrub"), None)
-        if svc is None:
-            print("error: bridge does not expose 'pool_scrub' service.",
-                  file=sys.stderr)
-            return
-        await api.execute_service(
-            svc, {"start_byte": start_byte, "wait_ms": wait_ms},
-        )
-        print(f">>> sent pool_scrub(start_byte=0x{start_byte:02x}, "
-              f"wait_ms={wait_ms}) to bridge.")
+        if match["kind"] == "solid":
+            svc = next(
+                (s for s in services if s.name == "pool_send_byte"), None)
+            if svc is None:
+                print("error: bridge does not expose 'pool_send_byte'.",
+                      file=sys.stderr)
+                return
+            await api.execute_service(
+                svc, {"byte": match["start_byte"]})
+            print(f">>> sent pool_send_byte(byte=0x"
+                  f"{match['start_byte']:02x}) — '{match['name']}'.")
+        else:
+            svc = next(
+                (s for s in services if s.name == "pool_scrub"), None)
+            if svc is None:
+                print("error: bridge does not expose 'pool_scrub'.",
+                      file=sys.stderr)
+                return
+            await api.execute_service(svc, {
+                "start_byte": match["start_byte"],
+                "wait_ms": match["wait_ms"],
+            })
+            print(f">>> sent pool_scrub(start_byte=0x"
+                  f"{match['start_byte']:02x}, "
+                  f"wait_ms={match['wait_ms']}) — "
+                  f"'{match['name']}'.")
     finally:
         await api.disconnect()
 
@@ -171,6 +238,16 @@ def main() -> int:
                    help="exclude samples with t_ms < this (default "
                         "2500 — covers the ~1.6 s firmware-dispatch "
                         "delay before the show actually starts)")
+    p.add_argument("--solid-preference", type=float, default=30.0,
+                   help="bias toward solids by subtracting this "
+                        "from solid distances when ranking. Solids "
+                        "are deterministic; shows have inherent "
+                        "timing variance, so a slightly-farther "
+                        "solid is usually a better choice than a "
+                        "marginally-closer show sample. Default 30 "
+                        "— means a solid wins unless a show sample "
+                        "is more than 30 RGB-distance closer. Set "
+                        "to 0 to disable the bias.")
     p.add_argument("--send", action="store_true",
                    help="after picking the top match, call the "
                         "bridge's pool_scrub service to drive the "
@@ -188,7 +265,8 @@ def main() -> int:
         return 1
     data = json.loads(args.dataset.read_text())
 
-    matches = find_matches(args.target, data, args.skip_ms, args.top)
+    matches = find_matches(args.target, data, args.skip_ms, args.top,
+                           solid_preference=args.solid_preference)
     if not matches:
         print("error: no candidates found in dataset (after skip_ms "
               "filter)", file=sys.stderr)
@@ -211,8 +289,7 @@ def main() -> int:
                   "or --api-key", file=sys.stderr)
             return 2
         asyncio.run(send_via_bridge(
-            args.host, args.port, noise_psk,
-            best["start_byte"], best["wait_ms"],
+            args.host, args.port, noise_psk, best,
         ))
     return 0
 
