@@ -307,6 +307,27 @@ async def run_calibration(args: argparse.Namespace) -> int:
         await bridge.disconnect()
         return 1
 
+    # Try to disable the camera's auto-adjustment loops. If we don't,
+    # the FaceTime camera continuously rebalances against the dominant
+    # colour and washes out the fixture's true output — Brazilian Red
+    # ends up muted because the camera adapted to Parisian Blue first,
+    # smooth-blending shows get normalised toward grey, etc.
+    #
+    # cv2 returns False for properties the AVFoundation backend doesn't
+    # support; we report each attempt for visibility but proceed
+    # regardless. AUTO_WB / AUTO_EXPOSURE / AUTOFOCUS coverage varies
+    # by macOS version. The 0.25 magic value for AUTO_EXPOSURE is the
+    # AVFoundation convention for "manual exposure mode."
+    cam_props = [
+        ("AUTO_WB", cv2.CAP_PROP_AUTO_WB, 0),
+        ("AUTOFOCUS", cv2.CAP_PROP_AUTOFOCUS, 0),
+        ("AUTO_EXPOSURE", cv2.CAP_PROP_AUTO_EXPOSURE, 0.25),
+    ]
+    for name, prop, value in cam_props:
+        ok = camera.set(prop, value)
+        readback = camera.get(prop)
+        print(f"    camera.{name}: set={value} → ok={ok} readback={readback}")
+
     try:
         if args.roi_cx is not None and args.roi_cy is not None:
             roi = Roi(cx=args.roi_cx, cy=args.roi_cy, half=args.roi_half)
