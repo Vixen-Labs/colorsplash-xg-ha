@@ -308,9 +308,18 @@ async def run_calibration(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        roi = select_roi(camera, half=args.roi_half)
-        print(f"    ROI set to centre=({roi.cx},{roi.cy}) "
-              f"half={roi.half} → xywh={roi.xywh}")
+        if args.roi_cx is not None and args.roi_cy is not None:
+            roi = Roi(cx=args.roi_cx, cy=args.roi_cy, half=args.roi_half)
+            print(f"    using saved ROI centre=({roi.cx},{roi.cy}) "
+                  f"half={roi.half} → xywh={roi.xywh} "
+                  f"(skipping click prompt)")
+        else:
+            roi = select_roi(camera, half=args.roi_half)
+            print(f"    ROI set to centre=({roi.cx},{roi.cy}) "
+                  f"half={roi.half} → xywh={roi.xywh}")
+            print(f"    (re-use without re-clicking next time: "
+                  f"--roi-cx {roi.cx} --roi-cy {roi.cy} "
+                  f"--roi-half {roi.half})")
 
         result = CalibrationResult(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -404,6 +413,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", default="tools/show_colors.json")
     p.add_argument("--roi-half", type=int, default=30,
                    help="half-width of the sample ROI in pixels")
+    p.add_argument("--roi-cx", type=int, default=None,
+                   help="ROI centre x (skip the click prompt). "
+                        "Useful at night: set ROI during dusk, then "
+                        "re-run with these flags after dark.")
+    p.add_argument("--roi-cy", type=int, default=None,
+                   help="ROI centre y (paired with --roi-cx)")
     p.add_argument("--show-duration", type=float, default=90.0)
     p.add_argument("--solid-hold", type=float, default=12.0)
     p.add_argument("--solid-sample", type=float, default=5.0)
