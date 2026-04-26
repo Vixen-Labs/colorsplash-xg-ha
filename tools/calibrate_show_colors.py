@@ -127,11 +127,39 @@ class BridgeClient:
             )
         return cls(api=api, send_byte_service=send_byte_service)
 
-    async def send_byte(self, byte_value: int) -> None:
-        """Send one byte to the controller via the bridge's user-service."""
+    async def send_byte(self, byte_value: int,
+                        events_file=None,
+                        kind: str = "send",
+                        label: str = "") -> float:
+        """Send one byte to the controller via the bridge's user-service.
+
+        If `events_file` is provided, append a JSONL event with wall-
+        clock + monotonic timestamps + byte + label so a post-process
+        video tool can align the recording timeline to the byte-send
+        events.
+
+        Returns `time.monotonic()` captured immediately before the
+        BLE write was issued — so call sites can use this as t0 for
+        their own sample windows (the BLE write itself takes
+        ~50–200 ms; close enough for our timing needs).
+        """
+        t_send = time.monotonic()
+        if events_file is not None:
+            event = {
+                "wall_clock": datetime.now(timezone.utc).isoformat(
+                    timespec="milliseconds"),
+                "monotonic": t_send,
+                "byte": int(byte_value),
+                "byte_hex": f"0x{byte_value:02x}",
+                "kind": kind,
+                "label": label,
+            }
+            events_file.write(json.dumps(event) + "\n")
+            events_file.flush()
         await self.api.execute_service(
             self.send_byte_service, {"byte": byte_value},
         )
+        return t_send
 
     async def disconnect(self) -> None:
         await self.api.disconnect()
@@ -257,7 +285,8 @@ def sample_window(camera: cv2.VideoCapture, roi: Roi, duration_s: float,
 
 async def sample_show(bridge: "BridgeClient", camera: cv2.VideoCapture,
                       roi: Roi, byte_val: int, duration_s: float,
-                      label: str, preview: bool = True
+                      label: str, preview: bool = True,
+                      events_file=None,
                       ) -> list[tuple[float, tuple[int, int, int]]]:
     """Send the show's start byte and immediately begin sampling the
     fixture's response. t=0 in the returned samples is the moment the
@@ -283,8 +312,8 @@ async def sample_show(bridge: "BridgeClient", camera: cv2.VideoCapture,
     # the actual ATT Write Request to the controller follows within
     # 50-200 ms (BLE latency). Close enough for our timing needs —
     # the fixture won't visibly respond for several more seconds.
-    t0 = time.monotonic()
-    await bridge.send_byte(byte_val)
+    t0 = await bridge.send_byte(byte_val, events_file=events_file,
+                                kind="show", label=label)
     deadline = t0 + duration_s
     last_print = t0
     while True:
@@ -370,6 +399,22 @@ async def run_calibration(args: argparse.Namespace) -> int:
         await bridge.disconnect()
         return 1
 
+    events_file = None
+    if args.events_log:
+        events_path = Path(args.events_log)
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        events_file = open(events_path, "w")
+        # Header line so a post-process tool can sanity-check the file.
+        events_file.write(json.dumps({
+            "wall_clock": datetime.now(timezone.utc).isoformat(
+                timespec="milliseconds"),
+            "monotonic": time.monotonic(),
+            "kind": "run-start",
+            "label": "calibration session start",
+        }) + "\n")
+        events_file.flush()
+        print(f"    events log: {events_path}")
+
     try:
         if args.roi_cx is not None and args.roi_cy is not None:
             roi = Roi(cx=args.roi_cx, cy=args.roi_cy, half=args.roi_half)
@@ -408,7 +453,10 @@ async def run_calibration(args: argparse.Namespace) -> int:
         if not args.skip_wb_cal:
             print("\n>>> WB calibration: driving Arctic White, "
                   f"holding {args.wb_settle:.1f}s for camera to adapt.")
-            await bridge.send_byte(0x0b)  # Arctic White
+            await bridge.send_byte(
+                0x0b, events_file=events_file,
+                kind="wb-cal", label="Arctic White (sync flash)",
+            )
             await asyncio.sleep(args.wb_settle)
             # cv2 returns False for properties the AVFoundation backend
             # doesn't support; we attempt and log each outcome and
@@ -431,7 +479,10 @@ async def run_calibration(args: argparse.Namespace) -> int:
         if not args.skip_ambient:
             print("\n>>> Phase A: Standby — lights off, sampling ambient.")
             wait_or_skip("Phase A")
-            await bridge.send_byte(STANDBY_BYTE)
+            await bridge.send_byte(
+                STANDBY_BYTE, events_file=events_file,
+                kind="ambient", label="Standby (ambient baseline)",
+            )
             print(f"    sent Standby (0x{STANDBY_BYTE:02x}); "
                   f"holding {args.solid_hold:.1f}s for fixture to dim")
             await asyncio.sleep(args.solid_hold)
@@ -446,7 +497,10 @@ async def run_calibration(args: argparse.Namespace) -> int:
             wait_or_skip("Phase B")
             for byte_val, name in SOLIDS:
                 print(f"\n  -- {name} (0x{byte_val:02x}) --")
-                await bridge.send_byte(byte_val)
+                await bridge.send_byte(
+                    byte_val, events_file=events_file,
+                    kind="solid", label=name,
+                )
                 print(f"     sent; holding {args.solid_hold:.1f}s")
                 await asyncio.sleep(args.solid_hold)
                 samples = sample_window(camera, roi, args.solid_sample,
@@ -474,6 +528,7 @@ async def run_calibration(args: argparse.Namespace) -> int:
             samples = await sample_show(
                 bridge, camera, roi, byte_val,
                 args.show_duration, label=name,
+                events_file=events_file,
             )
             result.shows[name] = [
                 {"t_ms": int(round(t * 1000)), "rgb": list(rgb)}
@@ -489,19 +544,33 @@ async def run_calibration(args: argparse.Namespace) -> int:
         # ---- Cleanup: return to Standby unless suppressed ----
         if not args.no_standby_end:
             print("\n>>> Returning to Standby.")
-            await bridge.send_byte(STANDBY_BYTE)
+            await bridge.send_byte(
+                STANDBY_BYTE, events_file=events_file,
+                kind="end-standby", label="end-of-run Standby",
+            )
 
         # ---- Persist ----
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(result.to_json(), indent=2))
         print(f"\n>>> wrote {out_path} ({out_path.stat().st_size} bytes)")
+        if events_file is not None:
+            events_file.write(json.dumps({
+                "wall_clock": datetime.now(timezone.utc).isoformat(
+                    timespec="milliseconds"),
+                "monotonic": time.monotonic(),
+                "kind": "run-end",
+                "label": "calibration session end",
+            }) + "\n")
+            events_file.flush()
         return 0
 
     finally:
         camera.release()
         cv2.destroyAllWindows()
         await bridge.disconnect()
+        if events_file is not None:
+            events_file.close()
 
 
 def parse_args() -> argparse.Namespace:
@@ -544,6 +613,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--wb-settle", type=float, default=10.0,
                    help="seconds to wait after Arctic White is sent "
                         "before locking the camera's auto loops")
+    p.add_argument("--events-log", default=None,
+                   help="write a JSONL file with wall-clock + monotonic "
+                        "timestamps for every byte send. Used by "
+                        "tools/extract_colors_from_video.py to align an "
+                        "external video recording (e.g. from Final Cut "
+                        "Pro with manually locked WB) to the calibration "
+                        "timeline. Suggested path: tools/events.jsonl.")
     return p.parse_args()
 
 
