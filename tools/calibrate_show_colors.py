@@ -328,10 +328,16 @@ async def run_calibration(args: argparse.Namespace) -> int:
                  "xywh": list(roi.xywh)},
         )
 
+        def wait_or_skip(label: str) -> None:
+            if args.no_prompt:
+                print(f"    [no-prompt mode: continuing into {label}]")
+                return
+            input("    Press Enter when ready ...")
+
         # ---- Phase A: Standby (ambient baseline) ----
         if not args.skip_ambient:
             print("\n>>> Phase A: Standby — lights off, sampling ambient.")
-            input("    Press Enter when ready ...")
+            wait_or_skip("Phase A")
             await bridge.send_byte(STANDBY_BYTE)
             print(f"    sent Standby (0x{STANDBY_BYTE:02x}); "
                   f"holding {args.solid_hold:.1f}s for fixture to dim")
@@ -344,7 +350,7 @@ async def run_calibration(args: argparse.Namespace) -> int:
         # ---- Phase B: Solids ----
         if not args.skip_solids:
             print("\n>>> Phase B: 5 solid colours.")
-            input("    Press Enter when ready ...")
+            wait_or_skip("Phase B")
             for byte_val, name in SOLIDS:
                 print(f"\n  -- {name} (0x{byte_val:02x}) --")
                 await bridge.send_byte(byte_val)
@@ -367,7 +373,7 @@ async def run_calibration(args: argparse.Namespace) -> int:
                 return 1
 
         print("\n>>> Phase C: Shows.")
-        input("    Press Enter when ready ...")
+        wait_or_skip("Phase C")
         for byte_val, name in chosen_shows:
             print(f"\n  -- {name} (0x{byte_val:02x}) — sampling for "
                   f"{args.show_duration:.0f}s --")
@@ -429,6 +435,11 @@ def parse_args() -> argparse.Namespace:
                    help="comma-separated subset (case-insensitive) — "
                         "default runs all 7")
     p.add_argument("--no-standby-end", action="store_true")
+    p.add_argument("--no-prompt", action="store_true",
+                   help="skip the 'Press Enter when ready' between "
+                        "phases — required for non-interactive runs. "
+                        "Pair with --roi-cx/--roi-cy so the click "
+                        "step is also skipped.")
     return p.parse_args()
 
 
