@@ -255,6 +255,69 @@ def sample_window(camera: cv2.VideoCapture, roi: Roi, duration_s: float,
     return samples
 
 
+async def sample_show(bridge: "BridgeClient", camera: cv2.VideoCapture,
+                      roi: Roi, byte_val: int, duration_s: float,
+                      label: str, preview: bool = True
+                      ) -> list[tuple[float, tuple[int, int, int]]]:
+    """Send the show's start byte and immediately begin sampling the
+    fixture's response. t=0 in the returned samples is the moment the
+    BLE write was issued (so t_ms in the JSON corresponds directly to
+    wait_ms in the future picker — picker can do
+    `lock at t = wait_ms` to recover the colour observed at that point
+    in this sample).
+
+    Captures the entire transition envelope: t=0..~0.5s is BLE write
+    in flight, t=~0.5..~10s is the fixture's blackout transition,
+    then the show actively cycles through its colour sequence.
+
+    Replaces the old "send → sleep transition_hold → sample" pattern
+    that was missing the entire transition phase and shifting the
+    timeline by 12 s.
+    """
+    if preview:
+        win = f"Sampling — {label}" if label else "Sampling"
+        cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    samples: list[tuple[float, tuple[int, int, int]]] = []
+    # Anchor t0 at the moment we ISSUE the BLE write. The send_byte
+    # await returns when the bridge has accepted the service call;
+    # the actual ATT Write Request to the controller follows within
+    # 50-200 ms (BLE latency). Close enough for our timing needs —
+    # the fixture won't visibly respond for several more seconds.
+    t0 = time.monotonic()
+    await bridge.send_byte(byte_val)
+    deadline = t0 + duration_s
+    last_print = t0
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        ok, frame = camera.read()
+        if not ok:
+            await asyncio.sleep(0.005)
+            continue
+        rgb = roi.sample_rgb(frame)
+        samples.append((now - t0, rgb))
+        if preview:
+            x, y, w, h = roi.xywh
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(frame, f"{label}  RGB={rgb}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                        (0, 255, 0), 2)
+            remaining = max(0.0, deadline - now)
+            cv2.putText(frame, f"{remaining:0.1f}s remaining",
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (255, 255, 255), 2)
+            cv2.imshow(win, frame)
+            cv2.waitKey(1)
+        if now - last_print >= 1.0:
+            print(f"  [{label}] t={now - t0:5.1f}s  rgb={rgb}",
+                  flush=True)
+            last_print = now
+    if preview:
+        cv2.destroyWindow(win)
+    return samples
+
+
 def mean_rgb(samples: list[tuple[float, tuple[int, int, int]]]
              ) -> tuple[int, int, int]:
     if not samples:
@@ -405,19 +468,23 @@ async def run_calibration(args: argparse.Namespace) -> int:
         print("\n>>> Phase C: Shows.")
         wait_or_skip("Phase C")
         for byte_val, name in chosen_shows:
-            print(f"\n  -- {name} (0x{byte_val:02x}) — sampling for "
-                  f"{args.show_duration:.0f}s --")
-            await bridge.send_byte(byte_val)
-            print(f"     sent; holding {args.transition_hold:.1f}s "
-                  "for fixture to enter the show")
-            await asyncio.sleep(args.transition_hold)
-            samples = sample_window(camera, roi, args.show_duration,
-                                    label=name)
+            print(f"\n  -- {name} (0x{byte_val:02x}) — sending start "
+                  f"byte and sampling for {args.show_duration:.0f}s "
+                  "from t=0 --")
+            samples = await sample_show(
+                bridge, camera, roi, byte_val,
+                args.show_duration, label=name,
+            )
             result.shows[name] = [
                 {"t_ms": int(round(t * 1000)), "rgb": list(rgb)}
                 for t, rgb in samples
             ]
             print(f"     captured {len(samples)} samples")
+            # Brief pause between shows so the fixture has a moment
+            # to react to the next start byte from a known state
+            # rather than mid-cycle. 2 s is enough for the BLE link
+            # to settle without making the run drag.
+            await asyncio.sleep(2.0)
 
         # ---- Cleanup: return to Standby unless suppressed ----
         if not args.no_standby_end:
