@@ -307,27 +307,6 @@ async def run_calibration(args: argparse.Namespace) -> int:
         await bridge.disconnect()
         return 1
 
-    # Try to disable the camera's auto-adjustment loops. If we don't,
-    # the FaceTime camera continuously rebalances against the dominant
-    # colour and washes out the fixture's true output — Brazilian Red
-    # ends up muted because the camera adapted to Parisian Blue first,
-    # smooth-blending shows get normalised toward grey, etc.
-    #
-    # cv2 returns False for properties the AVFoundation backend doesn't
-    # support; we report each attempt for visibility but proceed
-    # regardless. AUTO_WB / AUTO_EXPOSURE / AUTOFOCUS coverage varies
-    # by macOS version. The 0.25 magic value for AUTO_EXPOSURE is the
-    # AVFoundation convention for "manual exposure mode."
-    cam_props = [
-        ("AUTO_WB", cv2.CAP_PROP_AUTO_WB, 0),
-        ("AUTOFOCUS", cv2.CAP_PROP_AUTOFOCUS, 0),
-        ("AUTO_EXPOSURE", cv2.CAP_PROP_AUTO_EXPOSURE, 0.25),
-    ]
-    for name, prop, value in cam_props:
-        ok = camera.set(prop, value)
-        readback = camera.get(prop)
-        print(f"    camera.{name}: set={value} → ok={ok} readback={readback}")
-
     try:
         if args.roi_cx is not None and args.roi_cy is not None:
             roi = Roi(cx=args.roi_cx, cy=args.roi_cy, half=args.roi_half)
@@ -354,6 +333,36 @@ async def run_calibration(args: argparse.Namespace) -> int:
                 print(f"    [no-prompt mode: continuing into {label}]")
                 return
             input("    Press Enter when ready ...")
+
+        # ---- Camera white-balance calibration ----
+        # Drive the fixture to Arctic White, give the camera time to
+        # adapt to that reference, then lock the auto-WB / autofocus /
+        # auto-exposure loops so they can't drift during the rest of
+        # the run. If we skipped this, every solid + show colour would
+        # shift the camera's WB target and wash out subsequent
+        # readings (Brazilian Red came in muted in the un-locked run
+        # because the camera had adapted to Parisian Blue first).
+        if not args.skip_wb_cal:
+            print("\n>>> WB calibration: driving Arctic White, "
+                  f"holding {args.wb_settle:.1f}s for camera to adapt.")
+            await bridge.send_byte(0x0b)  # Arctic White
+            await asyncio.sleep(args.wb_settle)
+            # cv2 returns False for properties the AVFoundation backend
+            # doesn't support; we attempt and log each outcome and
+            # proceed regardless. The 0.25 magic value for
+            # AUTO_EXPOSURE is the AVFoundation convention for
+            # "manual exposure mode" (locks the current value).
+            cam_props = [
+                ("AUTO_WB", cv2.CAP_PROP_AUTO_WB, 0),
+                ("AUTOFOCUS", cv2.CAP_PROP_AUTOFOCUS, 0),
+                ("AUTO_EXPOSURE", cv2.CAP_PROP_AUTO_EXPOSURE, 0.25),
+            ]
+            for name, prop, value in cam_props:
+                ok = camera.set(prop, value)
+                readback = camera.get(prop)
+                print(f"    camera.{name}: set={value} → "
+                      f"ok={ok} readback={readback}")
+            print(f"    auto loops locked at the white-adapted state.")
 
         # ---- Phase A: Standby (ambient baseline) ----
         if not args.skip_ambient:
@@ -461,6 +470,13 @@ def parse_args() -> argparse.Namespace:
                         "phases — required for non-interactive runs. "
                         "Pair with --roi-cx/--roi-cy so the click "
                         "step is also skipped.")
+    p.add_argument("--skip-wb-cal", action="store_true",
+                   help="skip the Arctic-White camera white-balance "
+                        "calibration step (rarely useful — only for "
+                        "debugging the script itself)")
+    p.add_argument("--wb-settle", type=float, default=10.0,
+                   help="seconds to wait after Arctic White is sent "
+                        "before locking the camera's auto loops")
     return p.parse_args()
 
 
