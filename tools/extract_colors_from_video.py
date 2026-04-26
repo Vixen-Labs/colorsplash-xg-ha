@@ -215,6 +215,13 @@ def main() -> int:
     p.add_argument("--solid-hold", type=float, default=12.0,
                    help="seconds the calibration script waited after each "
                         "solid send before sampling (default 12)")
+    p.add_argument("--offset", type=float, default=None,
+                   help="override the script-to-video timeline offset, "
+                        "in seconds (video_t = script_t + offset). Use "
+                        "this when the WB-cal Arctic-White auto-detect "
+                        "fails — e.g. because the fixture was already "
+                        "white when the video recording started, so "
+                        "there's no brightness step to detect.")
     args = p.parse_args()
 
     if not args.video.exists():
@@ -240,29 +247,40 @@ def main() -> int:
     print(f">>> walking video frames ...")
     fps, video_samples = walk_video(args.video, roi)
 
-    # Find the WB-cal sync flash in the video.
-    flash_t_video = find_sync_flash(video_samples, fps_hint=fps)
-    if flash_t_video is None:
-        print("error: could not find sync flash in video; check ROI / "
-              "video / start of recording.", file=sys.stderr)
-        return 1
-    print(f">>> sync flash found at video t = {flash_t_video:.3f}s")
-
-    # Find the WB-cal event in the script's events log.
-    wb_cal_event = next(
-        (e for e in events if e.get("kind") == "wb-cal"), None)
-    if wb_cal_event is None:
-        print("error: no wb-cal event in events log; was --events-log "
-              "passed to calibrate_show_colors.py?", file=sys.stderr)
-        return 1
-    flash_t_script = wb_cal_event["monotonic"]
-
-    # Offset = (when the flash happened in video time) -
-    #          (when the flash happened in script time).
-    # video_t = script_t + offset.
-    offset = flash_t_video - flash_t_script
-    print(f">>> timeline offset: video_t = script_t + {offset:.3f}s "
-          f"(video started {-offset:+.3f}s relative to script start)")
+    # Determine the script-to-video timeline offset.
+    # video_t = script_t + offset (where script_t is monotonic).
+    flash_t_video = None
+    flash_t_script = None
+    if args.offset is not None:
+        # Caller supplied an explicit offset relative to script
+        # run-start (which has script_t = events[0]["monotonic"]).
+        run_start_event = next(
+            (e for e in events if e.get("kind") == "run-start"), events[0])
+        flash_t_script = run_start_event["monotonic"]
+        flash_t_video = args.offset
+        offset = flash_t_video - flash_t_script
+        print(f">>> using explicit --offset {args.offset:.3f}s "
+              f"(video t={args.offset:.3f}s = script run-start)")
+    else:
+        flash_t_video = find_sync_flash(video_samples, fps_hint=fps)
+        if flash_t_video is None:
+            print("error: could not find sync flash in video; pass "
+                  "--offset N to override (video t in seconds where "
+                  "the calibration's run-start fell). check ROI / "
+                  "video / start of recording.", file=sys.stderr)
+            return 1
+        print(f">>> sync flash found at video t = {flash_t_video:.3f}s")
+        wb_cal_event = next(
+            (e for e in events if e.get("kind") == "wb-cal"), None)
+        if wb_cal_event is None:
+            print("error: no wb-cal event in events log; was "
+                  "--events-log passed to calibrate_show_colors.py?",
+                  file=sys.stderr)
+            return 1
+        flash_t_script = wb_cal_event["monotonic"]
+        offset = flash_t_video - flash_t_script
+        print(f">>> timeline offset: video_t = script_t + {offset:.3f}s "
+              f"(video started {-offset:+.3f}s relative to script start)")
 
     def script_to_video_t(script_monotonic: float) -> float:
         return script_monotonic + offset
