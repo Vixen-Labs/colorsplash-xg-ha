@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -363,13 +363,14 @@ class ColorSplashCard extends HTMLElement {
         text-overflow: ellipsis;
       }
 
-      /* HA's standard switch shape inside the tile. */
+      /* iOS-style switch — grey track + white knob when off,
+         green track + white knob when on. Theme-independent so
+         it always reads "off=grey, on=green". */
       .toggle-indicator {
         position: relative;
         width: 40px;
         height: 22px;
-        background: var(--switch-unchecked-track-color,
-                        var(--secondary-background-color, #6b6b6b));
+        background: #8e8e93;
         border-radius: 999px;
         flex: 0 0 auto;
         pointer-events: none;
@@ -378,22 +379,20 @@ class ColorSplashCard extends HTMLElement {
       .toggle-indicator::before {
         content: "";
         position: absolute;
-        top: 3px;
-        left: 3px;
-        width: 16px;
-        height: 16px;
+        top: 2px;
+        left: 2px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
-        background: var(--switch-unchecked-button-color, #fafafa);
+        background: #ffffff;
         box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-        transition: left 0.18s ease, background-color 0.18s ease;
+        transition: left 0.18s ease;
       }
       .tile.on .toggle-indicator {
-        background: var(--switch-checked-track-color,
-                        var(--primary-color, #03a9f4));
+        background: #34c759;
       }
       .tile.on .toggle-indicator::before {
-        left: 21px;
-        background: var(--switch-checked-button-color, #fff);
+        left: 20px;
       }
 
       /* ─── Section heading ──────────────────────────────────── */
