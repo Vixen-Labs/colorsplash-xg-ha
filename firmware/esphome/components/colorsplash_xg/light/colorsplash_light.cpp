@@ -2,6 +2,7 @@
 
 #ifdef USE_ESP32
 
+#include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
 #include <cmath>
@@ -62,7 +63,24 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     uint8_t b = (uint8_t) std::round(v.get_blue() * 255.0f);
     ESP_LOGI(TAG, "light RGB write: target=(%u,%u,%u) → pick_color",
              r, g, b);
-    this->parent_->pick_color(r, g, b);
+    auto rec = this->parent_->pick_color(r, g, b);
+
+    // Republish the LUT-resolved RGB so HA reflects the color the
+    // fixture actually displays, not the (often unreachable) target
+    // the user picked. ESPHome's LightCall machinery sets
+    // remote_values to the current_values target *after* this
+    // write_state returns; deferring to a 50 ms timeout lets that
+    // happen first, then we override with the resolved RGB.
+    if (rec.r != r || rec.g != g || rec.b != b) {
+      uint8_t pr = rec.r, pg = rec.g, pb = rec.b;
+      App.scheduler.set_timeout(state, "publish_resolved_rgb", 50,
+          [state, pr, pg, pb]() {
+        state->remote_values.set_red(pr / 255.0f);
+        state->remote_values.set_green(pg / 255.0f);
+        state->remote_values.set_blue(pb / 255.0f);
+        state->publish_state();
+      });
+    }
     return;
   }
 

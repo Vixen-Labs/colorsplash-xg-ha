@@ -91,10 +91,12 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
 
   // Phase 4b: drive the fixture to display a target observed RGB.
   // Calls find_recipe() then dispatches: send the start byte, and
-  // (for shows) schedule a Lock send at wait_ms. Triggers an
-  // on_pick_callback if any are registered (so the YAML on_state
-  // lambda can update the dropdown / record state).
-  void pick_color(uint8_t r, uint8_t g, uint8_t b);
+  // (for shows) schedule a Lock send at wait_ms. Returns the
+  // matched recipe so callers can read back the LUT-resolved RGB
+  // (used by the light entity to republish the actual displayed
+  // color on the HA side, since the user's target may not be
+  // exactly reachable by the LUT).
+  PickRecipe pick_color(uint8_t r, uint8_t g, uint8_t b);
 
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }

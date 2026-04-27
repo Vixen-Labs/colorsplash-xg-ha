@@ -577,7 +577,8 @@ ColorSplashXG::PickRecipe ColorSplashXG::find_recipe(
   return best;
 }
 
-void ColorSplashXG::pick_color(uint8_t r, uint8_t g, uint8_t b) {
+ColorSplashXG::PickRecipe ColorSplashXG::pick_color(
+    uint8_t r, uint8_t g, uint8_t b) {
   PickRecipe rec = this->find_recipe(r, g, b);
   ESP_LOGI(TAG,
            "pick_color: target=(%u,%u,%u) → %s (0x%02x) "
@@ -594,6 +595,7 @@ void ColorSplashXG::pick_color(uint8_t r, uint8_t g, uint8_t b) {
       this->send_effect_byte(0x0d);
     });
   }
+  return rec;
 }
 
 }  // namespace colorsplash_xg
