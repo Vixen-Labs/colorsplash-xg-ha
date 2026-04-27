@@ -89,17 +89,28 @@ const SHOWS = [
   },
 ];
 
-const DEFAULTS = {
-  light_entity: "light.pool_light",
-  lock_entity: "button.pool_color_lock",
-  return_entity: "button.pool_color_return",
-  // Per-solid button entity overrides not needed — we derive each
-  // from `button.{btn}` of the SOLIDS table. Override only by
-  // modifying the SOLIDS list locally if you renamed entities.
+// Entity-id prefix that HA prepends to all entities created by the
+// ESPHome integration. Matches `friendly_name: ColorSplash XG Bridge`
+// → `colorsplash_xg_bridge_`. If you flashed the display variant
+// instead, set prefix to `colorsplash_xg_` (no `_bridge`). If you
+// renamed the device in HA, set prefix to whatever shows up in
+// Developer Tools → States.
+const DEFAULT_PREFIX = "colorsplash_xg_bridge_";
 
-  // ESPHome service names for the bridge's pool_scrub + pool_set_rgb
-  // — used to fire saved presets. Defaults match the headless YAML's
-  // friendly_name slug.
+const DEFAULTS = {
+  // Entity-id prefix override — see DEFAULT_PREFIX comment above.
+  prefix: DEFAULT_PREFIX,
+
+  // Per-entity overrides take precedence over the prefix-built
+  // defaults. Pass any subset; unspecified ones use prefix + slug.
+  light_entity: null,
+  lock_entity: null,
+  return_entity: null,
+
+  // ESPHome service name for the bridge's pool_scrub — used to
+  // fire saved presets. Default matches the headless variant's
+  // device-name slug (`colorsplash-xg-bridge`). HA service names
+  // use underscores: dots between domain.service are auto-handled.
   scrub_service: "esphome.colorsplash_xg_bridge_pool_scrub",
 
   // Reserved for issue #53 — saved colour presets. Each preset is
@@ -137,7 +148,19 @@ class ColorSplashCard extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = {...DEFAULTS, ...(config || {})};
+    const merged = {...DEFAULTS, ...(config || {})};
+    const prefix = merged.prefix || "";
+    // Resolve entity IDs: explicit override wins, otherwise built
+    // from prefix + slug. Solid buttons are always built from
+    // prefix + solid.btn unless the user overrides at the per-solid
+    // level (rare; not exposed for v1).
+    merged.light_entity = merged.light_entity
+        || `light.${prefix}pool_light`;
+    merged.lock_entity = merged.lock_entity
+        || `button.${prefix}pool_color_lock`;
+    merged.return_entity = merged.return_entity
+        || `button.${prefix}pool_color_return`;
+    this._config = merged;
   }
 
   set hass(hass) {
@@ -422,7 +445,8 @@ class ColorSplashCard extends HTMLElement {
         // (the bridge does this automatically on the LVGL UI but
         // HA's effect attribute is independent state).
         hass.callService("button", "press",
-                         {entity_id: `button.${t.dataset.button}`});
+                         {entity_id:
+                          `button.${cfg.prefix}${t.dataset.button}`});
         hass.callService("light", "turn_on",
                          {entity_id: cfg.light_entity, effect: "None"});
         break;

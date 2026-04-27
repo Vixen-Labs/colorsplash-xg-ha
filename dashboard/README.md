@@ -127,14 +127,29 @@ thumbnails, an "R" Return badge, a distinct Lock button, and a
    ```
 
    That's it — defaults match the headless firmware's entity
-   IDs. If you renamed entities, override:
+   IDs (HA prepends `colorsplash_xg_bridge_` to every entity
+   from the device).
+
+   **If you flashed the display variant** instead, override the
+   prefix:
 
    ```yaml
    type: custom:colorsplash-xg-card
-   light_entity: light.pool_light
-   lock_entity: button.pool_color_lock
-   return_entity: button.pool_color_return
-   scrub_service: esphome.colorsplash_xg_bridge_pool_scrub
+   prefix: colorsplash_xg_
+   ```
+
+   **If you renamed the device in HA**, set `prefix` to whatever
+   you see in Developer Tools → States (look for any of your
+   `light.*` or `button.*` entries — everything before
+   `pool_light` is the prefix). Or override individual entity
+   IDs explicitly:
+
+   ```yaml
+   type: custom:colorsplash-xg-card
+   light_entity: light.my_pool
+   lock_entity: button.my_pool_color_lock
+   return_entity: button.my_pool_color_return
+   scrub_service: esphome.my_pool_pool_scrub
    ```
 
 4. Hard-reload the dashboard (Cmd-Shift-R / Ctrl-Shift-R) to
