@@ -68,6 +68,34 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // INFO level so probe runs are reproducible from the log.
   void probe_write_raw(const std::vector<uint8_t> &bytes);
 
+  // Phase 4b show-scrub picker. Result of looking up a target RGB
+  // in the embedded calibration LUT. See show_color_lut.h.
+  struct PickRecipe {
+    uint8_t  start_byte;     // byte to send to start the show or solid
+    uint32_t wait_ms;        // delay before sending Lock; 0 for solids
+    bool     is_solid;       // true = no Lock needed (deterministic)
+    uint8_t  r, g, b;        // observed RGB at the matched sample
+    float    distance;       // Euclidean RGB distance to target
+    const char *name;        // human-readable show / solid name
+  };
+
+  // Look up the best (start_byte, wait_ms) for a target RGB. Solids
+  // get a `solid_preference_bias` distance bonus (subtracted from
+  // their distance) to favor deterministic single-byte commands when
+  // results are similar. lock_comp_ms is subtracted from wait_ms
+  // to compensate for the Lock byte's settling latency. Both default
+  // to the empirically-tuned values from docs/RGB_EXPERIMENT.md.
+  PickRecipe find_recipe(uint8_t r, uint8_t g, uint8_t b,
+                         float solid_preference_bias = 30.0f,
+                         uint32_t lock_comp_ms = 700) const;
+
+  // Phase 4b: drive the fixture to display a target observed RGB.
+  // Calls find_recipe() then dispatches: send the start byte, and
+  // (for shows) schedule a Lock send at wait_ms. Triggers an
+  // on_pick_callback if any are registered (so the YAML on_state
+  // lambda can update the dropdown / record state).
+  void pick_color(uint8_t r, uint8_t g, uint8_t b);
+
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
 

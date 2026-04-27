@@ -4,6 +4,8 @@
 
 #include "esphome/core/log.h"
 
+#include <cmath>
+
 namespace esphome {
 namespace colorsplash_xg {
 
@@ -18,17 +20,27 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     return;
   }
 
-  // HA asked for ON. Two resolvers, in order:
+  // HA asked for ON. Three resolvers, in priority order:
   //
   // 1. A show effect is selected. Look up its byte by name. Also
   //    handles NVS restore — LightState restores the effect index
   //    without firing effect.start(), so doing the lookup here
   //    guarantees the fixture comes up in the expected state.
+  //    Effect wins over RGB because users who pick a named effect
+  //    from the dropdown want that effect, not whatever colour
+  //    happens to be on the wheel.
   //
-  // 2. Bare ON (toggle, no effect): resume the most recent visible
-  //    preset byte (either a solid pressed via button entity or
-  //    the last show that ran). Falls back to Arctic White (0x0B)
-  //    on a cold first-boot where no preset has been applied yet.
+  // 2. RGB colour mode is active. Run the embedded picker
+  //    (find_recipe + dispatch) — finds the closest reachable
+  //    sample in the show LUT and either sends a single solid
+  //    byte or starts a show + schedules a Lock at the matched
+  //    offset. Phase 4b production path.
+  //
+  // 3. Bare ON (toggle, no effect, no colour): resume the most
+  //    recent visible preset byte (either a solid pressed via
+  //    button entity or the last show that ran). Falls back to
+  //    Arctic White (0x0B) on a cold first-boot where no preset
+  //    has been applied yet.
 
   if (state->get_current_effect_index() != 0) {
     auto name = state->get_effect_name();
@@ -40,6 +52,17 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     ESP_LOGW(TAG,
              "unknown effect name '%.*s', falling through to default",
              static_cast<int>(name.size()), name.c_str());
+  }
+
+  if (state->current_values.get_color_mode() == light::ColorMode::RGB) {
+    const auto &v = state->current_values;
+    uint8_t r = (uint8_t) std::round(v.get_red() * 255.0f);
+    uint8_t g = (uint8_t) std::round(v.get_green() * 255.0f);
+    uint8_t b = (uint8_t) std::round(v.get_blue() * 255.0f);
+    ESP_LOGI(TAG, "light RGB write: target=(%u,%u,%u) → pick_color",
+             r, g, b);
+    this->parent_->pick_color(r, g, b);
+    return;
   }
 
   const auto last_preset = this->parent_->last_preset_byte();

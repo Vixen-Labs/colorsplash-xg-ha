@@ -44,10 +44,15 @@ class ColorSplashLightOutput : public light::LightOutput {
  public:
   light::LightTraits get_traits() override {
     light::LightTraits traits;
-    // ON_OFF only — HA shouldn't show a brightness slider or color
-    // picker, because the fixture supports neither. The 5 solid
-    // colors are exposed as button entities in YAML.
-    traits.set_supported_color_modes({light::ColorMode::ON_OFF});
+    // ON_OFF for the simple toggle / effect path; RGB so HA's
+    // standard light card exposes a colour wheel that drives the
+    // bridge's embedded show-scrub picker (Phase 4b). The fixture
+    // doesn't support brightness, so we don't advertise it — HA
+    // will just hide the brightness slider.
+    traits.set_supported_color_modes({
+        light::ColorMode::ON_OFF,
+        light::ColorMode::RGB,
+    });
     return traits;
   }
 

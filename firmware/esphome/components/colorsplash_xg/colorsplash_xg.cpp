@@ -9,6 +9,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>
+
+#include "show_color_lut.h"
 
 namespace esphome {
 namespace colorsplash_xg {
@@ -465,6 +468,122 @@ void ColorSplashXG::probe_write_raw(
                 "raw[%u] %s",
                 static_cast<unsigned>(bytes.size()), hex);
   this->last_command_name_ = formatted;
+}
+
+// Phase 4b show-scrub picker. Searches the embedded LUT for the
+// (start_byte, wait_ms) whose observed RGB is closest to the target,
+// preferring solids when distances are similar.
+ColorSplashXG::PickRecipe ColorSplashXG::find_recipe(
+    uint8_t r, uint8_t g, uint8_t b,
+    float solid_preference_bias,
+    uint32_t lock_comp_ms) const {
+  // Solid name lookup keyed by start byte. Order matches generate_show_lut.py.
+  static const char *const SOLID_NAMES_BY_BYTE[] = {
+      // Sparse — only the 5 solid bytes are populated; others are
+      // returned as nullptr so the lookup falls through to "unknown".
+      // Indexed by start_byte (1 to 0x0e covers all show + solid + control).
+      nullptr,                                  // 0x00 = Standby
+      "Peruvian Paradise", "Super Nova",        // 0x01, 0x02
+      "Northern Lights", "Tidal Wave",          // 0x03, 0x04
+      "Patriot Dream", "Desert Skies",          // 0x05, 0x06
+      "Nova",                                   // 0x07
+      "Parisian Blue", "New Zealand Green",     // 0x08, 0x09
+      "Brazilian Red", "Arctic White",          // 0x0a, 0x0b
+      "Miami Pink",                             // 0x0c
+      "Lock", "Return",                         // 0x0d, 0x0e
+  };
+  auto name_for = [&](uint8_t byte) -> const char * {
+    if (byte < sizeof(SOLID_NAMES_BY_BYTE) / sizeof(*SOLID_NAMES_BY_BYTE)) {
+      const char *n = SOLID_NAMES_BY_BYTE[byte];
+      if (n != nullptr) return n;
+    }
+    return "(unknown)";
+  };
+
+  auto sq_dist = [&](uint8_t sr, uint8_t sg, uint8_t sb) -> float {
+    const float dr = (float) r - (float) sr;
+    const float dg = (float) g - (float) sg;
+    const float db = (float) b - (float) sb;
+    return dr * dr + dg * dg + db * db;
+  };
+
+  // Best across solids (with bias).
+  float best_eff = 1e30f;
+  PickRecipe best{};
+  bool found = false;
+  for (size_t i = 0; i < SOLID_LUT_LEN; i++) {
+    const auto &s = SOLID_LUT[i];
+    float d = std::sqrt(sq_dist(s.r, s.g, s.b));
+    float eff = d - solid_preference_bias;
+    if (eff < 0) eff = 0;
+    if (eff < best_eff) {
+      best_eff = eff;
+      best = PickRecipe{
+          .start_byte = s.start_byte,
+          .wait_ms = 0,
+          .is_solid = true,
+          .r = s.r,
+          .g = s.g,
+          .b = s.b,
+          .distance = d,
+          .name = name_for(s.start_byte),
+      };
+      found = true;
+    }
+  }
+
+  // Best across show samples (no bias).
+  for (size_t i = 0; i < SHOW_LUT_LEN; i++) {
+    const auto &s = SHOW_LUT[i];
+    float d = std::sqrt(sq_dist(s.r, s.g, s.b));
+    if (d < best_eff) {
+      best_eff = d;
+      // Apply lock compensation to the wait_ms.
+      uint32_t wait = s.wait_ms;
+      if (wait > lock_comp_ms) wait -= lock_comp_ms;
+      else wait = 0;
+      best = PickRecipe{
+          .start_byte = s.start_byte,
+          .wait_ms = wait,
+          .is_solid = false,
+          .r = s.r,
+          .g = s.g,
+          .b = s.b,
+          .distance = d,
+          .name = name_for(s.start_byte),
+      };
+      found = true;
+    }
+  }
+
+  if (!found) {
+    // Empty LUT — caller should ignore this; return a safe sentinel.
+    best = PickRecipe{
+        .start_byte = 0x00, .wait_ms = 0, .is_solid = true,
+        .r = 0, .g = 0, .b = 0, .distance = 9999.0f,
+        .name = "(empty LUT)",
+    };
+  }
+  return best;
+}
+
+void ColorSplashXG::pick_color(uint8_t r, uint8_t g, uint8_t b) {
+  PickRecipe rec = this->find_recipe(r, g, b);
+  ESP_LOGI(TAG,
+           "pick_color: target=(%u,%u,%u) → %s (0x%02x) "
+           "%s wait_ms=%u observed=(%u,%u,%u) dist=%.1f",
+           r, g, b, rec.name, rec.start_byte,
+           rec.is_solid ? "(solid)" : "(show-scrub)",
+           rec.wait_ms, rec.r, rec.g, rec.b, rec.distance);
+  this->send_effect_byte(rec.start_byte);
+  if (!rec.is_solid && rec.wait_ms > 0) {
+    // Schedule the Lock byte after wait_ms. Use ESPHome's scheduler
+    // so the wait is non-blocking.
+    this->set_timeout("pick_lock", rec.wait_ms, [this]() {
+      ESP_LOGI(TAG, "pick_color: firing Lock (0x0d)");
+      this->send_effect_byte(0x0d);
+    });
+  }
 }
 
 }  // namespace colorsplash_xg
