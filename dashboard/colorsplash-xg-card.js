@@ -23,7 +23,7 @@
  * built-in Lovelace runtime which provides hass + setConfig.
  */
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 // 5 documented solid presets (from PROTOCOL.md and the firmware's
 // SOLID_COLORS table). RGB values are the canonical bright primaries
@@ -337,15 +337,9 @@ class ColorSplashCard extends HTMLElement {
       .lock-btn::before {
         content: "🔒  ";
       }
-      /* Subtle dim when the light is off — still clearly tappable
-         (each tap also turns the light on), not a "disabled" look. */
-      .off-state .swatch,
-      .off-state .show-tile {
-        opacity: 0.85;
-      }
-      .off-state .lock-btn {
-        opacity: 0.6;
-      }
+      /* No off-state dim — every tap turns the light on, so the
+         card always looks active. State is reflected in the toggle
+         button at the top, not by greying out controls. */
       .error-banner {
         background: var(--error-color, #d32f2f);
         color: #fff;
@@ -367,7 +361,6 @@ class ColorSplashCard extends HTMLElement {
   _buildHTML(isOn, activeEffect) {
     const cfg = this._config;
     const lightFound = !!this._hass.states[cfg.light_entity];
-    const stateClass = isOn ? "" : "off-state";
     const toggleLabel = isOn ? "On" : "Off";
     const toggleClass = isOn ? "toggle" : "toggle off";
 
@@ -433,7 +426,7 @@ class ColorSplashCard extends HTMLElement {
            </div>`;
 
     return `
-      <div class="card ${stateClass}">
+      <div class="card">
         ${errorBanner}
         <div class="header">
           <span class="title">Pool Light</span>
@@ -467,7 +460,13 @@ class ColorSplashCard extends HTMLElement {
     const action = t.dataset.action;
     const cfg = this._config;
     const hass = this._hass;
-    if (!hass) return;
+    if (!hass) {
+      console.warn("[colorsplash-xg-card] hass not yet attached");
+      return;
+    }
+    console.info(
+        `[colorsplash-xg-card v${VERSION}] click action=${action}`,
+        {dataset: {...t.dataset}, light_entity: cfg.light_entity});
 
     switch (action) {
       case "toggle":
