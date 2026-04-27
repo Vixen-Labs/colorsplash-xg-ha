@@ -1,0 +1,9 @@
+{"wall_clock": "2026-04-27T03:45:05.458+00:00", "monotonic": 9042.19145375, "kind": "run-start", "label": "replay-probe 'Nova' \u00d7 3"}
+{"wall_clock": "2026-04-27T03:45:05.458+00:00", "monotonic": 9042.191682791, "kind": "ambient", "label": "initial Standby (run pre-state)", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:45:27.519+00:00", "monotonic": 9064.252404458, "kind": "show", "label": "Nova #1", "byte": 7, "byte_hex": "0x07"}
+{"wall_clock": "2026-04-27T03:46:02.559+00:00", "monotonic": 9099.292408791, "kind": "ambient", "label": "reset before #2", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:46:22.563+00:00", "monotonic": 9119.296340875, "kind": "show", "label": "Nova #2", "byte": 7, "byte_hex": "0x07"}
+{"wall_clock": "2026-04-27T03:46:57.593+00:00", "monotonic": 9154.325971375, "kind": "ambient", "label": "reset before #3", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:47:17.597+00:00", "monotonic": 9174.329660583, "kind": "show", "label": "Nova #3", "byte": 7, "byte_hex": "0x07"}
+{"wall_clock": "2026-04-27T03:47:52.651+00:00", "monotonic": 9209.382925125, "kind": "end-standby", "label": "end-of-run Standby", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:47:52.652+00:00", "monotonic": 9209.384542583, "kind": "run-end", "label": "replay-probe complete"}

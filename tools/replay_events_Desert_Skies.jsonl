@@ -1,0 +1,9 @@
+{"wall_clock": "2026-04-27T03:56:23.657+00:00", "monotonic": 9720.3856315, "kind": "run-start", "label": "replay-probe 'Desert Skies' \u00d7 3"}
+{"wall_clock": "2026-04-27T03:56:23.658+00:00", "monotonic": 9720.385873208, "kind": "ambient", "label": "initial Standby (run pre-state)", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:56:45.720+00:00", "monotonic": 9742.448001, "kind": "show", "label": "Desert Skies #1", "byte": 6, "byte_hex": "0x06"}
+{"wall_clock": "2026-04-27T03:57:20.779+00:00", "monotonic": 9777.507085875, "kind": "ambient", "label": "reset before #2", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:57:40.781+00:00", "monotonic": 9797.508529541, "kind": "show", "label": "Desert Skies #2", "byte": 6, "byte_hex": "0x06"}
+{"wall_clock": "2026-04-27T03:58:15.821+00:00", "monotonic": 9832.548686, "kind": "ambient", "label": "reset before #3", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:58:35.826+00:00", "monotonic": 9852.553082208, "kind": "show", "label": "Desert Skies #3", "byte": 6, "byte_hex": "0x06"}
+{"wall_clock": "2026-04-27T03:59:10.868+00:00", "monotonic": 9887.595105583, "kind": "end-standby", "label": "end-of-run Standby", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:59:10.869+00:00", "monotonic": 9887.596048291, "kind": "run-end", "label": "replay-probe complete"}

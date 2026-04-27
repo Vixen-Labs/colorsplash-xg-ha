@@ -1,0 +1,9 @@
+{"wall_clock": "2026-04-27T03:50:44.706+00:00", "monotonic": 9381.436675333, "kind": "run-start", "label": "replay-probe 'Northern Lights' \u00d7 3"}
+{"wall_clock": "2026-04-27T03:50:44.706+00:00", "monotonic": 9381.436918, "kind": "ambient", "label": "initial Standby (run pre-state)", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:51:06.768+00:00", "monotonic": 9403.499224083, "kind": "show", "label": "Northern Lights #1", "byte": 3, "byte_hex": "0x03"}
+{"wall_clock": "2026-04-27T03:51:41.828+00:00", "monotonic": 9438.55856075, "kind": "ambient", "label": "reset before #2", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:52:01.832+00:00", "monotonic": 9458.562180083, "kind": "show", "label": "Northern Lights #2", "byte": 3, "byte_hex": "0x03"}
+{"wall_clock": "2026-04-27T03:52:36.865+00:00", "monotonic": 9493.595282666, "kind": "ambient", "label": "reset before #3", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:52:56.868+00:00", "monotonic": 9513.598147791, "kind": "show", "label": "Northern Lights #3", "byte": 3, "byte_hex": "0x03"}
+{"wall_clock": "2026-04-27T03:53:31.917+00:00", "monotonic": 9548.646182083, "kind": "end-standby", "label": "end-of-run Standby", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:53:31.919+00:00", "monotonic": 9548.648241708, "kind": "run-end", "label": "replay-probe complete"}

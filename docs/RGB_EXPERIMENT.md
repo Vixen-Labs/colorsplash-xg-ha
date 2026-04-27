@@ -1,20 +1,111 @@
 # Phase 4a — direct RGB probe (negative)
+# Phase 4b — show-scrub picker (positive)
 
-## Result
+## Phase 4a result
 
 **No arbitrary RGB is reachable via the LPL-XG-CTRL-1's BLE
-protocol.** The controller exposes exactly the 15 documented
-single-byte opcodes (Standby + 7 shows + 5 solids + Lock + Return)
-and silently rejects everything else. The 12-tile palette in the
-official J&J ColorSplash XG app is the complete user-reachable
-surface — there are no hidden opcodes, no parameterised commands,
-and no multi-byte writes.
+protocol directly.** The controller exposes exactly the 15
+documented single-byte opcodes (Standby + 7 shows + 5 solids +
+Lock + Return) and silently rejects everything else. The 12-tile
+palette in the official J&J ColorSplash XG app is the complete
+user-reachable surface — there are no hidden opcodes, no
+parameterised commands, and no multi-byte writes.
 
-Phase 4b's show-scrub fallback (lock the fixture mid-show on the
-desired colour) is therefore the only remaining path to arbitrary
-colours and will be the next phase of work.
+See [§Phase 4a method + findings](#phase-4a-method-and-findings)
+for the probe details.
 
-## Method
+## Phase 4b result
+
+**Show-scrub works as a reliable arbitrary-RGB mechanism.** Every
+one of the 7 shows has a deterministic per-replay transition
+envelope: command-to-first-colour timing reproduces with σ ≤ 112 ms
+across 3 replays per show. The picker tool
+(`tools/pick_color.py`) loads a calibration dataset, finds the
+sample whose observed RGB is closest to a target, and either
+recommends or directly executes a `(start_byte, wait_ms)` recipe.
+
+### Per-show consistency (3 replays each)
+
+| Show | Cmd→colour mean | σ | Picker precision (95% CI) |
+|---|---:|---:|---:|
+| Super Nova | 4408 ms | 29 ms | ±58 ms |
+| Desert Skies | 6341 ms | 30 ms | ±60 ms |
+| Nova | 6874 ms | 33 ms | ±66 ms |
+| Peruvian Paradise | 3972 ms | 38 ms | ±75 ms |
+| Patriot Dream | 6005 ms | 62 ms | ±124 ms |
+| Tidal Wave | 5454 ms | 101 ms | ±201 ms |
+| Northern Lights | 4946 ms | 112 ms | ±224 ms |
+
+Every show landed at GOOD on the analyzer's verdict
+threshold (σ ≤ 200 ms). Five of seven shows are tight (σ ≤ 65
+ms); two show somewhat looser timing (Tidal Wave / Northern
+Lights, both ≤ 225 ms 95 % CI), still well under the windows
+where the show's colour visibly changes.
+
+The "old-colour persists" pre-blackout latency is consistently
+~50–70 ms across all shows (σ = 5–6 ms each) — that's the
+fixed BLE write + BGScript dispatch delay before the controller
+acts on the new command.
+
+### Tool stack
+
+- **`tools/calibrate_show_colors.py`** — drives the bridge
+  through ambient + 5 solids + 7 shows, sampling RGB via cv2
+  + camera. Produces a calibration JSON with per-show timeline
+  data.
+- **`tools/extract_colors_from_video.py`** — alternative
+  calibration path: post-process a video file (e.g. an iPhone
+  Final Cut Camera recording with locked WB + exposure) +
+  events log to produce the same JSON shape but with cleaner
+  colour data.
+- **`tools/replay_probe.py`** — drives one show N times back-
+  to-back and samples cv2 throughout. Used for measuring
+  per-show timing reproducibility.
+- **`tools/analyze_replay_consistency.py`** — reports per-show
+  timing distribution (mean, σ, min, max) and a GOOD / USABLE /
+  POOR verdict.
+- **`tools/pick_color.py`** — given a target observed RGB,
+  finds the closest reachable sample (solid or show-scrub),
+  prints the recipe, and optionally fires the bridge to display
+  it (`pool_send_byte` for solids, `pool_scrub` for shows).
+
+### Picker behaviour
+
+- **Solid preference bias** (default 30 RGB units): when a
+  target is close to one of the 5 named solid presets, the
+  solid wins over a marginally-closer show sample. Solids are
+  deterministic — no scrub timing, no Lock — so a small
+  distance penalty for shows is justified by zero timing
+  variance.
+- **Skip-early window** (default 2500 ms): samples in the
+  pre-blackout / firmware-dispatch window are excluded from
+  matching, so the picker never recommends a `wait_ms` value
+  that lands during the controller's old-colour-persists period.
+- **Replay-mode-aware**: the picker recognises `<show> #N`
+  keys from `replay_probe.py` output and matches the base
+  show name, so a single dataset can mix calibration data and
+  replay-test data without confusing the search.
+
+### Reachable colour gamut
+
+The fixture + pool reflectance combination determines what RGB
+targets are actually attainable. From the
+`tools/show_colors_video.json` calibration:
+
+| Target style | Attainable? | Best match |
+|---|---|---|
+| Pure red `(200, 30, 30)` | ✓ | Brazilian Red solid (dist 68) |
+| Pure blue `(30, 30, 200)` | ✓ | Parisian Blue solid (dist 48) |
+| Cyan `(0, 200, 200)` | ✗ | Tidal Wave dist 113 (saturated cyan unreachable) |
+| Yellow `(230, 200, 30)` | weak | Nova @ 70 s dist 85 |
+| Pink `(220, 90, 180)` | weak | Northern Lights @ 74 s dist 63 |
+| Muted purple `(140, 80, 180)` | ✓ | Northern Lights @ 32 s dist 5 |
+
+In general, distances ≤ 30 are excellent matches; 30–80 are
+acceptable; > 100 means the target is genuinely outside the
+fixture's gamut.
+
+## Phase 4a method and findings
 
 The probe ran against the headless ESP32 bridge
 (`firmware/esphome/colorsplash-xg-headless.yaml`) on
@@ -46,8 +137,6 @@ Indication echoes from the controller were observed via
 §Controller-to-central indications, the indication echo is the
 authoritative "command accepted" signal — its absence indicates
 the controller did not act on the write.
-
-## Findings
 
 ### Single-byte sweep — bytes outside the documented range alias to the documented opcodes via modulo 14
 
@@ -126,59 +215,25 @@ on the documented command characteristic. There is no other
 writable characteristic on this controller (only DIS read-only
 chars, the command char at 0x000f, and its CCCD).
 
-## Conclusion
-
-The controller is fundamentally constrained to the 14 visible
-effects + 1 standby state baked into its firmware. The protocol
-surface area exposed over BLE matches the official app's UI
-exactly; there is no hidden control plane.
-
-**Phase 4a closes negative.** The next move is Phase 4b (show-
-scrub fallback): characterise each show's colour cycle, then
-expose `set_color(r, g, b)` that picks the closest show + offset,
-starts the show, waits for the fixture to reach that colour, and
-sends Lock to freeze it there. Per `docs/PROTOCOL.md`'s show
-gradients table, the per-show colour sequences are already known
-from the app decompile, so 4b doesn't need to characterise the
-shows from scratch on video.
-
-## Reproducer
-
-The probe entities remain in
-`firmware/esphome/colorsplash-xg-headless.yaml` so this result is
-re-verifiable on any other LPL-XG-CTRL-1 firmware revision. To
-reproduce:
-
-1. Flash the headless variant to a bridge connected to the
-   controller.
-2. In HA, set `text.pool_probe_byte_hex` to a probe value (e.g.
-   `0f`) and press `button.pool_probe_send_byte`. Observe
-   `text_sensor.pool_last_echo` and the fixture.
-3. For multi-byte tests, set `text.pool_probe_bytes_hex` (e.g.
-   `08 00 00`) and press `button.pool_probe_send_bytes`. Echo
-   should remain unchanged; fixture should not respond.
-4. The component method `colorsplash_xg::probe_write_raw(std::
-   vector<uint8_t>)` in
-   `firmware/esphome/components/colorsplash_xg/colorsplash_xg.cpp`
-   is the lower-level escape hatch if a future probe wants to
-   try other patterns (write-without-response,
-   different-handle, larger payloads up to MTU).
-
 ## Caveats
 
 - Tested on one controller unit. Different LPL-XG-CTRL-1
   firmware revisions could in theory expose different behaviour;
   the controller does not expose a Firmware Revision String so
   we cannot identify which build this is. Cross-confirmation
-  from other XG owners would strengthen the negative result.
-- Did not exhaustively sweep all 240 unmapped bytes — sampled
-  three values that, together with the formula derivation, are
-  sufficient to demonstrate the modulo-alias rule. A future
-  contributor wanting to verify exhaustively can do so cheaply
-  with the existing probe UI.
-- Did not test write-without-response (`ESP_GATT_WRITE_TYPE_NO_RSP`)
-  or auth-required writes (`ESP_GATT_AUTH_REQ_SIGNED_MITM`).
-  Both are unlikely to change the result — the controller's
-  response/echo behaviour is opcode-layer, not transport-layer —
-  but they remain available probe variants for future
-  investigation if desired.
+  from other XG owners would strengthen both the negative
+  Phase 4a result and the positive Phase 4b model.
+- 3 replays per show in Phase 4b is enough to demonstrate
+  reproducibility but is not a tight statistical bound. A 10×
+  or 20× replay run would tighten the σ estimates if needed for
+  a future picker integration.
+- Calibration is camera + pool-reflectance specific. The
+  observed RGB values in `tools/show_colors_video.json` are
+  what *this* user's pool surface looks like through *this*
+  camera. Re-calibration is required for a different
+  installation.
+- The picker operates entirely in observed-RGB space — no
+  display-referred colour management or perceptual distance
+  metrics (Lab, CIEDE2000) are applied. Euclidean RGB distance
+  is fine for "look-like" matching against the camera-observed
+  reference, which is the picker's actual purpose.

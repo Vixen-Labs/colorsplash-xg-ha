@@ -1,0 +1,9 @@
+{"wall_clock": "2026-04-27T03:53:34.120+00:00", "monotonic": 9550.849650375, "kind": "run-start", "label": "replay-probe 'Tidal Wave' \u00d7 3"}
+{"wall_clock": "2026-04-27T03:53:34.120+00:00", "monotonic": 9550.849879291, "kind": "ambient", "label": "initial Standby (run pre-state)", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:53:56.184+00:00", "monotonic": 9572.913484958, "kind": "show", "label": "Tidal Wave #1", "byte": 4, "byte_hex": "0x04"}
+{"wall_clock": "2026-04-27T03:54:31.243+00:00", "monotonic": 9607.972190416, "kind": "ambient", "label": "reset before #2", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:54:51.248+00:00", "monotonic": 9627.977167458, "kind": "show", "label": "Tidal Wave #2", "byte": 4, "byte_hex": "0x04"}
+{"wall_clock": "2026-04-27T03:55:26.279+00:00", "monotonic": 9663.00803625, "kind": "ambient", "label": "reset before #3", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:55:46.282+00:00", "monotonic": 9683.010941791, "kind": "show", "label": "Tidal Wave #3", "byte": 4, "byte_hex": "0x04"}
+{"wall_clock": "2026-04-27T03:56:21.329+00:00", "monotonic": 9718.056805333, "kind": "end-standby", "label": "end-of-run Standby", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:56:21.329+00:00", "monotonic": 9718.057229291, "kind": "run-end", "label": "replay-probe complete"}

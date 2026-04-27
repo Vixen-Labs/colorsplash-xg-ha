@@ -1,0 +1,9 @@
+{"wall_clock": "2026-04-27T03:59:13.123+00:00", "monotonic": 9889.850223875, "kind": "run-start", "label": "replay-probe 'Peruvian Paradise' \u00d7 3"}
+{"wall_clock": "2026-04-27T03:59:13.124+00:00", "monotonic": 9889.850468083, "kind": "ambient", "label": "initial Standby (run pre-state)", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T03:59:35.128+00:00", "monotonic": 9911.854789833, "kind": "show", "label": "Peruvian Paradise #1", "byte": 1, "byte_hex": "0x01"}
+{"wall_clock": "2026-04-27T04:00:10.160+00:00", "monotonic": 9946.88639525, "kind": "ambient", "label": "reset before #2", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T04:00:30.163+00:00", "monotonic": 9966.889550541, "kind": "show", "label": "Peruvian Paradise #2", "byte": 1, "byte_hex": "0x01"}
+{"wall_clock": "2026-04-27T04:01:05.173+00:00", "monotonic": 10001.899175791, "kind": "ambient", "label": "reset before #3", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T04:01:25.176+00:00", "monotonic": 10021.902028541, "kind": "show", "label": "Peruvian Paradise #3", "byte": 1, "byte_hex": "0x01"}
+{"wall_clock": "2026-04-27T04:02:00.179+00:00", "monotonic": 10056.904135375, "kind": "end-standby", "label": "end-of-run Standby", "byte": 0, "byte_hex": "0x00"}
+{"wall_clock": "2026-04-27T04:02:00.180+00:00", "monotonic": 10056.905747833, "kind": "run-end", "label": "replay-probe complete"}
