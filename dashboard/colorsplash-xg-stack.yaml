@@ -1,0 +1,161 @@
+# ColorSplash XG dashboard — native light card + show/control switches.
+#
+# This config stacks HA's built-in `light` card (which renders the
+# color wheel automatically because the firmware advertises
+# ColorMode::RGB when `rgb_mode: true` is set in the headless YAML)
+# on top of a grid of show + control button entities.
+#
+# Closer to the "native Lovelace RGB light control with switches
+# below" UX than the from-scratch custom card in
+# colorsplash-xg-card.js.
+#
+# Paste into a Lovelace dashboard via Edit Dashboard →
+# `+ Add Card` → Manual.
+#
+# Entity-ID prefix is `colorsplash_xg_bridge_` for the headless
+# variant. Display variant: `colorsplash_xg_`.
+
+type: vertical-stack
+cards:
+  # ─── HA's native light card ─────────────────────────────────────
+  # When `rgb_mode: true` is set on the bridge's light: config, this
+  # card automatically shows a colour wheel (driven by the embedded
+  # show-scrub picker), an effects dropdown for the 7 named shows,
+  # and the on/off toggle. No custom JS required.
+  - type: light
+    entity: light.colorsplash_xg_bridge_pool_light
+    name: Pool Light
+    icon: mdi:pool
+
+  # ─── Show buttons ───────────────────────────────────────────────
+  # 7 named shows as a 2×4 grid. Tapping calls light.turn_on with
+  # the chosen effect (i.e. the same path the dropdown uses, just
+  # one tap instead of two). Each show byte fires via the bridge's
+  # encode_effect → send_effect_byte chain.
+  - type: heading
+    heading: Shows
+    heading_style: title
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: button
+        name: Nova
+        icon: mdi:weather-sunny
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Nova
+      - type: button
+        name: Super Nova
+        icon: mdi:weather-sunny-alert
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Super Nova
+      - type: button
+        name: Northern Lights
+        icon: mdi:weather-night
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Northern Lights
+      - type: button
+        name: Tidal Wave
+        icon: mdi:waves
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Tidal Wave
+      - type: button
+        name: Patriot Dream
+        icon: mdi:flag
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Patriot Dream
+      - type: button
+        name: Desert Skies
+        icon: mdi:weather-sunset
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Desert Skies
+      - type: button
+        name: Peruvian Paradise
+        icon: mdi:island
+        tap_action:
+          action: call-service
+          service: light.turn_on
+          target:
+            entity_id: light.colorsplash_xg_bridge_pool_light
+          data:
+            effect: Peruvian Paradise
+
+  # ─── Show-scrub controls ────────────────────────────────────────
+  # Lock captures the current displayed colour into the controller's
+  # "last locked" slot. Color Return replays it later. Tapping the
+  # button entities calls button.press; the bridge handles the
+  # rest. After Return, the bridge's was_last_send_return() flag
+  # short-circuits any subsequent turn_on so the locked colour
+  # isn't stomped (commit 8d2fc64).
+  - type: heading
+    heading: Show-scrub controls
+    heading_style: title
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: button
+        entity: button.colorsplash_xg_bridge_pool_color_lock
+        name: Color Lock
+        icon: mdi:lock
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.colorsplash_xg_bridge_pool_color_lock
+      - type: button
+        entity: button.colorsplash_xg_bridge_pool_color_return
+        name: Color Return
+        icon: mdi:restore
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.colorsplash_xg_bridge_pool_color_return
+
+  # ─── (Optional) BLE / RSSI status ──────────────────────────────
+  # Useful while you're dialing in the bridge's install location.
+  # Comment out if you don't need it cluttering the dashboard.
+  - type: entities
+    title: Diagnostics
+    entities:
+      - entity: binary_sensor.colorsplash_xg_bridge_pool_ble_connected
+        name: BLE link
+      - entity: sensor.colorsplash_xg_bridge_pool_ble_rssi
+        name: BLE RSSI
+      - entity: sensor.colorsplash_xg_bridge_pool_command_count
+        name: Commands sent
+      - entity: text_sensor.colorsplash_xg_bridge_pool_last_command
+        name: Last command

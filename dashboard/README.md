@@ -6,12 +6,20 @@ in `firmware/esphome/`.
 
 ## Files
 
-- **`colorsplash-xg.yaml`** — stock-Lovelace card config (tile + grid
-  + light cards). No custom resources, no HACS. Paste-to-install.
-- **`colorsplash-xg-card.js`** — custom Lovelace card (full-fill
-  colour swatches, gradient show thumbnails, "R" Return badge,
-  Lock save button). Vanilla JS, no build step. See
-  [Custom card install](#custom-card-install) below.
+- **`colorsplash-xg-stack.yaml`** — *recommended*. Native HA
+  light card on top (with the colour wheel from the firmware's
+  RGB mode) + button rows for shows + Color Lock/Return below.
+  No custom resources required. Paste-to-install.
+- **`colorsplash-xg.yaml`** — older stock-Lovelace card config
+  with tile-card colour accents instead of the native light
+  card. Predates the Phase 4b RGB picker. Kept for users who
+  prefer the simpler effects-only interface (no colour wheel).
+- **`colorsplash-xg-card.js`** — alternate custom card with
+  from-scratch swatch grid + gradient show thumbnails. Vanilla
+  JS, no build step. Doesn't expose the colour wheel — use this
+  if you want a more compact pool-control surface than the
+  stack approach. See [Custom card install](#custom-card-install)
+  below.
 - **`automations.yaml`** — example HA automations
   (sunset-on / sunrise-off, RSSI alerts, RGB-picker calls).
   Copy individual blocks into your `automations.yaml` or the UI.
