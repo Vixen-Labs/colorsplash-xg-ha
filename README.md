@@ -36,7 +36,7 @@ This project builds a permanently-online bridge:
   functional, but is no longer the primary path.
 
 <p align="center">
-  <img src="assets/colorsplash-xg-waveshare.jpg" alt="ColorSplash XG bridge running on a Waveshare ESP32-S3 7&quot; touchscreen, mounted on a wall and showing the LVGL UI: status bar, on/off switch, five colour swatches, effect dropdown, and Lock/Return buttons" width="420">
+  <img src="assets/colorsplash-xg-waveshare.jpg" alt="ColorSplash XG bridge running on a Waveshare ESP32-S3 7&quot; touchscreen, mounted on a wall and showing the LVGL UI: status bar, on/off switch, five color swatches, effect dropdown, and Lock/Return buttons" width="420">
   <br>
   <sub>The display variant on the wall — the headless variant has no UI of its own and is just a small ESP32 next to the equipment pad.</sub>
 </p>
@@ -81,9 +81,9 @@ That said, if you already have this hardware, and are looking to make the best o
   the dashboard card above.
 - **Optional experimental RGB picker (Phase 4b).** When
   `rgb_mode: true` is set on the `light:` config, HA's standard
-  light card gains a colour wheel that drives the bridge's
+  light card gains a color wheel that drives the bridge's
   embedded show-scrub picker. Default off because the reachable
-  colour gamut is constrained (some target RGBs land
+  color gamut is constrained (some target RGBs land
   approximately, not exactly). To toggle, edit the headless YAML's
   `light:` block:
   ```yaml
@@ -114,11 +114,11 @@ That said, if you already have this hardware, and are looking to make the best o
   - Status bar with Wi-Fi / HA-API / BLE indicators + 5-bar RSSI
     meter.
   - Single-tap on/off switch.
-  - Five circular colour swatches that drive the matching solid
+  - Five circular color swatches that drive the matching solid
     preset; the active swatch shows a white outline.
   - Effect dropdown for the seven shows; dropdown→None replays
-    the last solid colour the user displayed (or the locked
-    colour, if Lock was the last action).
+    the last solid color the user displayed (or the locked
+    color, if Lock was the last action).
   - Lock + Return buttons that map to the controller's show-scrub
     primitives.
 - **Standalone-capable** — every on-screen action drives the BLE
@@ -142,16 +142,16 @@ the next person:
   to BLE; the workaround is to just use the touchscreen or HA
   instead of the app.
 - **No readable state.** The controller will not tell you what
-  colour or show it is currently displaying — only what command was
+  color or show it is currently displaying — only what command was
   most recently sent. We cache the last preset byte locally and
   treat it as the source of truth.
 - **No native "stop the effect" command.** To leave an effect and
-  return to a solid, you re-send a solid-colour byte. The bridge
+  return to a solid, you re-send a solid-color byte. The bridge
   synthesises this by remembering the last solid the user picked
   and replaying it when the dropdown returns to "None" (issue #45).
 - **Fixed palette in fixture firmware.** Five solids + seven shows
   is what the fixture supports. Arbitrary RGB requires the Phase 4b
-  show-scrub workaround (lock the fixture mid-show on the colour
+  show-scrub workaround (lock the fixture mid-show on the color
   you want).
 - **BLE range is marginal through interior walls.** At the
   display variant's wall-mount location the RSSI floated between

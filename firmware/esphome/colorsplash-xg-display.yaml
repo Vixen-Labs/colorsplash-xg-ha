@@ -112,9 +112,9 @@ colorsplash_xg:
   # advertiser whose local name equals BGScripr.
   # mac_address: "AA:BB:CC:DD:EE:FF"
 
-# Tracks the last solid-colour byte the user picked (one of the
+# Tracks the last solid-color byte the user picked (one of the
 # five swatches, or the Return byte). Used by the dropdown's
-# "None" handler to restore the prior solid colour after the user
+# "None" handler to restore the prior solid color after the user
 # leaves an effect — the fixture has no native concept of "stop
 # the effect, go back to whatever I was showing", so we replay
 # the last solid byte ourselves. Defaults to white so the very
@@ -325,7 +325,7 @@ font:
 #   - BLE:    id(xg).connected() (BLEClientBase ESTABLISHED)
 #   - RSSI:   id(xg).last_rssi() (polled every 30s by the BLE
 #             component; 0 when disconnected)
-# Colour scheme: green (#71CD2E) = healthy, grey (#666677) = idle
+# Color scheme: green (#71CD2E) = healthy, grey (#666677) = idle
 # / not yet connected, red (#E32139) = unhealthy.
 interval:
   - interval: 1s
@@ -483,7 +483,7 @@ lvgl:
         # ─── Status bar (#17) ────────────────────────────────────
         # Four glanceable indicators at the very top of the page:
         # Wi-Fi, HA API, BLE-to-controller, BLE RSSI. Each label
-        # is updated by the interval timer below; colour is the
+        # is updated by the interval timer below; color is the
         # at-a-glance health signal (green = good, grey = unknown
         # / not yet connected, red = fail).
         - obj:
@@ -611,7 +611,7 @@ lvgl:
             align: LEFT_MID
         # 5 circular swatches in a row. Each is a checkable button
         # with radius=36 for a perfect circle; active highlight is
-        # a white outline ring (amber on light-coloured swatches).
+        # a white outline ring (amber on light-colored swatches).
         - obj:
             width: 100%
             height: 110
@@ -651,14 +651,14 @@ lvgl:
                     outline_color: 0xFFFFFF
                     outline_pad: 0
                   on_click:
-                    # Send the BLE byte for the colour, remember it as
+                    # Send the BLE byte for the color, remember it as
                     # the last solid (so the dropdown's "None" handler
                     # can replay it later), and snap the dropdown to
                     # "None". We deliberately don't go through
                     # `pool_light.turn_on().set_effect("None")` because
                     # that triggers write_state, which writes the cached
-                    # (white) colour to the fixture and overrides our
-                    # solid-colour command — visible as a brief white flash.
+                    # (white) color to the fixture and overrides our
+                    # solid-color command — visible as a brief white flash.
                     - lambda: |-
                         id(xg).send_effect_byte(0x08);
                         id(last_solid_byte) = 0x08;
@@ -806,11 +806,11 @@ lvgl:
                       0x00, 0x07, 0x02, 0x03,
                       0x04, 0x05, 0x06, 0x01};
                   if (x == 0) {
-                    // "None" — replay the last solid colour the user
+                    // "None" — replay the last solid color the user
                     // had before they picked an effect. The fixture
                     // has no native "stop effect" command; sending the
                     // last-solid byte takes it out of effect mode and
-                    // back to the colour they were displaying.
+                    // back to the color they were displaying.
                     id(xg).send_effect_byte(id(last_solid_byte));
                   } else if (x >= 1 && x <= 7) {
                     id(xg).send_effect_byte(bytes[x]);
@@ -859,10 +859,10 @@ lvgl:
                     pad_column: 10
                   on_click:
                     # Tapping Lock causes the fixture to display the
-                    # newly-locked colour immediately (same visible
+                    # newly-locked color immediately (same visible
                     # effect as a Return). Record 0x0e (Return) as the
                     # last solid so a later dropdown→None replays the
-                    # locked colour, matching what's on screen.
+                    # locked color, matching what's on screen.
                     - lambda: |-
                         id(xg).send_effect_byte(0x0d);
                         id(last_solid_byte) = 0x0e;
@@ -893,7 +893,7 @@ lvgl:
                   on_click:
                     # Send Return byte; record it as the last solid so
                     # a subsequent dropdown→None replays the same Return
-                    # (re-asserting the locked colour). Skip light.turn_on
+                    # (re-asserting the locked color). Skip light.turn_on
                     # to avoid the write_state white flash.
                     - lambda: |-
                         id(xg).send_effect_byte(0x0e);

@@ -131,7 +131,7 @@ Outdoor / poolside install considerations:
 ### Fixture doesn't respond to commands
 
 1. Check `sensor.pool_command_count` — does it increment when
-   you tap a colour? If yes, the bridge is sending; the
+   you tap a color? If yes, the bridge is sending; the
    controller may be busy.
 2. Check `text_sensor.pool_last_echo` — does it show the byte
    you sent? An echo confirms the controller received the
@@ -140,13 +140,13 @@ Outdoor / poolside install considerations:
    matching echo, the controller dropped the write — usually a
    transient BLE issue. Wait 10 s and retry.
 
-### RGB color picker (Phase 4b) lands the wrong colour
+### RGB color picker (Phase 4b) lands the wrong color
 
 1. Confirm the firmware was built with the LUT (the bare
    `git checkout v0.1.0-display` build doesn't have it). Look
-   at `text_sensor.pool_last_command` after a colour pick — it
+   at `text_sensor.pool_last_command` after a color pick — it
    should show the show-byte name, not just `Standby`.
-2. If the locked colour is consistently downstream of the
+2. If the locked color is consistently downstream of the
    picked target, retune `--lock-comp-ms` in the C++ default
    (currently 700 ms — see commit 223ad93). The right value
    varies with fixture firmware revision.

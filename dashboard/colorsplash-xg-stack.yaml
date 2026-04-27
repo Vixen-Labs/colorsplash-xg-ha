@@ -19,7 +19,7 @@ type: vertical-stack
 cards:
   # ─── HA's native light card ─────────────────────────────────────
   # When `rgb_mode: true` is set on the bridge's light: config, this
-  # card automatically shows a colour wheel (driven by the embedded
+  # card automatically shows a color wheel (driven by the embedded
   # show-scrub picker), an effects dropdown for the 7 named shows,
   # and the on/off toggle. No custom JS required.
   - type: light
@@ -112,11 +112,11 @@ cards:
             effect: Peruvian Paradise
 
   # ─── Show-scrub controls ────────────────────────────────────────
-  # Lock captures the current displayed colour into the controller's
+  # Lock captures the current displayed color into the controller's
   # "last locked" slot. Color Return replays it later. Tapping the
   # button entities calls button.press; the bridge handles the
   # rest. After Return, the bridge's was_last_send_return() flag
-  # short-circuits any subsequent turn_on so the locked colour
+  # short-circuits any subsequent turn_on so the locked color
   # isn't stomped (commit 8d2fc64).
   - type: heading
     heading: Show-scrub controls

@@ -147,7 +147,7 @@ Services → ESPHome → 3-dot menu → Reload). HA caches the
 device's color-mode capability at integration setup; just
 re-flashing isn't enough.
 
-Why it's experimental: the fixture's reachable colour gamut is
+Why it's experimental: the fixture's reachable color gamut is
 constrained, so target RGBs land approximately rather than
 exactly (issue #54 has full context). The future preset-card
 work (issue #53) will give users a way to save & tweak specific

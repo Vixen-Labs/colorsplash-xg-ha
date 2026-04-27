@@ -108,11 +108,11 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
 
   // True if the most recent display-changing byte was Return
   // (0x0e). Lock (0x0d) preserves the flag because it doesn't
-  // change displayed colour. Used by the light entity's
+  // change displayed color. Used by the light entity's
   // write_state to short-circuit the "fall through to last_preset"
   // path after a Return — without this, an HA-side
   // light.turn_on(effect:None) called for state-mirroring purposes
-  // would re-fire the prior preset and stomp the locked colour the
+  // would re-fire the prior preset and stomp the locked color the
   // fixture is now showing.
   bool was_last_send_return() const {
     return this->last_send_was_return_;

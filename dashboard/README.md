@@ -7,16 +7,16 @@ in `firmware/esphome/`.
 ## Files
 
 - **`colorsplash-xg-stack.yaml`** — *recommended*. Native HA
-  light card on top (with the colour wheel from the firmware's
+  light card on top (with the color wheel from the firmware's
   RGB mode) + button rows for shows + Color Lock/Return below.
   No custom resources required. Paste-to-install.
 - **`colorsplash-xg.yaml`** — older stock-Lovelace card config
-  with tile-card colour accents instead of the native light
+  with tile-card color accents instead of the native light
   card. Predates the Phase 4b RGB picker. Kept for users who
-  prefer the simpler effects-only interface (no colour wheel).
+  prefer the simpler effects-only interface (no color wheel).
 - **`colorsplash-xg-card.js`** — alternate custom card with
   from-scratch swatch grid + gradient show thumbnails. Vanilla
-  JS, no build step. Doesn't expose the colour wheel — use this
+  JS, no build step. Doesn't expose the color wheel — use this
   if you want a more compact pool-control surface than the
   stack approach. See [Custom card install](#custom-card-install)
   below.
@@ -108,7 +108,7 @@ firmware rebuild needed.
 ## Custom card install
 
 The custom-card version (`colorsplash-xg-card.js`) replaces the
-stock card with full-fill colour swatches, gradient show
+stock card with full-fill color swatches, gradient show
 thumbnails, an "R" Return badge, a distinct Lock button, and a
 "Saved Presets" section that's wired up for [#53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53).
 
@@ -181,9 +181,9 @@ card mount, so you can verify what's actually loaded:
 ### Saved Presets
 
 The custom card reserves a "Saved Presets" section between the
-Colours and Shows rows, populated from the card's `presets:`
+Colors and Shows rows, populated from the card's `presets:`
 YAML option. Each preset is a `(start_byte, wait_ms)` recipe
-with a display name and swatch colour:
+with a display name and swatch color:
 
 ```yaml
 type: custom:colorsplash-xg-card
@@ -206,7 +206,7 @@ lands a save-from-color-wheel UI.
 ┌───────────────────────────────────────┐
 │  Pool Light                  [ On  ]  │
 │                                       │
-│  COLOURS                              │
+│  COLORS                              │
 │  [B][R][W][P][G][R̲]                   │
 │                                       │
 │  SAVED PRESETS                        │
@@ -218,16 +218,16 @@ lands a save-from-color-wheel UI.
 │  [Patriot D  ][Desert Skies  ]        │
 │  [Peruvian P                 ]        │
 │                                       │
-│  [🔒 Lock current colour    ]         │
+│  [🔒 Lock current color    ]         │
 └───────────────────────────────────────┘
 ```
 
-- Solid swatches are full-colour fills (not the muted accents
+- Solid swatches are full-color fills (not the muted accents
   of the stock card).
 - Show tiles get `linear-gradient(...)` backgrounds derived from
   each show's documented gradient hexes (PROTOCOL.md
   §Show color gradients).
-- Active effect highlights with a primary-colour border.
+- Active effect highlights with a primary-color border.
 - All theming uses HA CSS custom properties so dark + light mode
   both look right.
 

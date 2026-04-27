@@ -4,9 +4,9 @@
 nearest to the target, and optionally drive the bridge to display it.
 
 The picker operates in OBSERVED-RGB space — not the fixture's true
-emitted RGB. The colour the user picks is "what the pool looks like"
+emitted RGB. The color the user picks is "what the pool looks like"
 through whatever camera the calibration was performed with. No
-display-referred colour-management transforms are applied.
+display-referred color-management transforms are applied.
 
 Usage:
     # show top match for a target RGB:
@@ -25,12 +25,12 @@ Usage:
 
 Match recipe details:
 - Distance metric: Euclidean in observed RGB. Perceptual distances
-  (Lab/CIEDE2000) would be more accurate for human-meaningful colour
+  (Lab/CIEDE2000) would be more accurate for human-meaningful color
   matching but require colorimetric calibration we don't have. The
   fixture+pool reflectance space is non-standard anyway, so the
   Euclidean metric over observed RGB is fine for "look like" matching.
 - Skip-early window: samples with t_ms < --skip-ms are excluded so
-  we don't pick a moment in the blackout / "old colour persists"
+  we don't pick a moment in the blackout / "old color persists"
   early window. Default 2500 ms covers the ~1.6 s firmware-dispatch
   delay + a small margin.
 """
@@ -56,7 +56,7 @@ SHOW_BYTES = {
     "Peruvian Paradise": 0x01,
 }
 
-# Solid colours — single byte, no scrub needed. Always preferred
+# Solid colors — single byte, no scrub needed. Always preferred
 # over a show-scrub when their distance is competitive: deterministic,
 # no transition timing, no Lock needed.
 SOLID_BYTES = {
@@ -260,7 +260,7 @@ def main() -> int:
                         "BLE write + BGScript dispatch + fixture-"
                         "side Lock settling. Default 700 was tuned "
                         "empirically against Tidal Wave on this "
-                        "install (without it, the locked colour "
+                        "install (without it, the locked color "
                         "landed visibly downstream of the target). "
                         "May need re-tuning for a different fixture "
                         "or installation. Solids ignore this — they "

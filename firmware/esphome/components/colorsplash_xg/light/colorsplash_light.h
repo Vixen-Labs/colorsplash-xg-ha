@@ -46,9 +46,9 @@ class ColorSplashLightOutput : public light::LightOutput {
     light::LightTraits traits;
     // ON_OFF for the simple toggle / effect path. RGB is opt-in
     // (rgb_mode: true on the light: YAML config) — when enabled,
-    // HA's standard light card exposes a colour wheel that drives
+    // HA's standard light card exposes a color wheel that drives
     // the bridge's embedded show-scrub picker (Phase 4b). Default
-    // off because the colour gamut is constrained and the picker
+    // off because the color gamut is constrained and the picker
     // is approximate (see issue #54). The fixture has no
     // brightness control, so we never advertise it.
     if (this->rgb_mode_) {

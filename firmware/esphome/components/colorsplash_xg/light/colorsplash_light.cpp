@@ -27,16 +27,16 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
   //    without firing effect.start(), so doing the lookup here
   //    guarantees the fixture comes up in the expected state.
   //    Effect wins over RGB because users who pick a named effect
-  //    from the dropdown want that effect, not whatever colour
+  //    from the dropdown want that effect, not whatever color
   //    happens to be on the wheel.
   //
-  // 2. RGB colour mode is active. Run the embedded picker
+  // 2. RGB color mode is active. Run the embedded picker
   //    (find_recipe + dispatch) — finds the closest reachable
   //    sample in the show LUT and either sends a single solid
   //    byte or starts a show + schedules a Lock at the matched
   //    offset. Phase 4b production path.
   //
-  // 3. Bare ON (toggle, no effect, no colour): resume the most
+  // 3. Bare ON (toggle, no effect, no color): resume the most
   //    recent visible preset byte (either a solid pressed via
   //    button entity or the last show that ran). Falls back to
   //    Arctic White (0x0B) on a cold first-boot where no preset
@@ -67,19 +67,19 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
   }
 
   // Post-Return short-circuit: the fixture is currently showing
-  // the colour that was Locked previously, and the user just
+  // the color that was Locked previously, and the user just
   // tapped Return to recall it. A bare HA-side turn_on (e.g. from
   // the JS card calling light.turn_on(effect:None) right after
   // pressing the Return button so HA's light entity flips to
   // "on") would otherwise fall through below and re-fire
-  // last_preset, stomping the locked colour. Skip the resend in
+  // last_preset, stomping the locked color. Skip the resend in
   // that window. The flag clears the next time send_effect_byte
   // is called with any display-changing byte (a solid, show, or
   // Standby).
   if (this->parent_->was_last_send_return()) {
     ESP_LOGD(TAG,
              "post-Return turn_on: skipping last_preset replay "
-             "to preserve the locked colour");
+             "to preserve the locked color");
     return;
   }
 

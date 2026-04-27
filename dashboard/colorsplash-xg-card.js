@@ -8,16 +8,16 @@
  * picker:
  *
  *   - Big tile-style toggle button (full-width, tap to toggle)
- *   - HSV colour wheel (drag to pick → light.turn_on rgb_color)
+ *   - HSV color wheel (drag to pick → light.turn_on rgb_color)
  *   - Swatches row: 5 solids + Return badge + saved presets
  *   - Effect dropdown: collapsible list with circular show
  *     swatch (gradient or discrete-slice) per entry
  *   - Lock button at the bottom
  *
  * Mirrors HA's circular-swatch convention: 40 px discs, white /
- * light colours get a `--divider-color` border; dark colours
+ * light colors get a `--divider-color` border; dark colors
  * have a transparent border so the swatch reads cleanly on both
- * light and dark themes. Active selections get a primary-colour
+ * light and dark themes. Active selections get a primary-color
  * outline.
  *
  * Resolves issue #41. See dashboard/README.md for install.
@@ -36,8 +36,8 @@ const SOLIDS = [
 ];
 
 // 7 documented shows. `discrete: true` → preview tile renders
-// hard-edged colour slices instead of a smooth gradient (Nova
-// and Super Nova jump between colours without blending).
+// hard-edged color slices instead of a smooth gradient (Nova
+// and Super Nova jump between colors without blending).
 const SHOWS = [
   {
     name: "Nova",
@@ -50,7 +50,7 @@ const SHOWS = [
     name: "Super Nova",
     effect: "Super Nova",
     discrete: true,
-    // Same colours as Nova but rendered twice so each slice is
+    // Same colors as Nova but rendered twice so each slice is
     // half-width — Super Nova switches ~3× as fast as Nova.
     gradient: ["#FEEA00", "#71CD2E", "#02ADF9", "#1649D5", "#DC0BB3",
                "#FFBF1C", "#17B63F", "#00B2E1", "#205ADB", "#CB00A9",
@@ -124,7 +124,7 @@ function luminosity(hex) {
 
 // Build a CSS gradient string for a show preview swatch. Uses
 // hard stops for `discrete` shows (Nova / Super Nova) so the
-// colour bands have crisp edges.
+// color bands have crisp edges.
 function showGradient(sh) {
   if (sh.gradient.length === 1) return sh.gradient[0];
   if (sh.discrete) {
@@ -351,7 +351,7 @@ class ColorSplashCard extends HTMLElement {
       }
       /* Mirrors the .swatch.light convention: when the tile is
          showing a light/white tint, the icon itself gets a
-         divider-coloured outline so the bulb shape stays
+         divider-colored outline so the bulb shape stays
          readable. ha-icon renders as a filled SVG with no
          native stroke, so we fake one via four offset
          drop-shadow filters. */
@@ -423,7 +423,7 @@ class ColorSplashCard extends HTMLElement {
         margin: 18px 0 10px;
       }
 
-      /* ─── Colour wheel ──────────────────────────────────────
+      /* ─── Color wheel ──────────────────────────────────────
          Pre-rendered HSV wheel; the cursor dot is positioned
          absolutely over it to indicate the current selection. */
       .wheel-wrap {
@@ -462,8 +462,8 @@ class ColorSplashCard extends HTMLElement {
 
       /* ─── Swatch grid ─────────────────────────────────────
          Mirrors HA's ha-favorite-color-button: 40 px discs,
-         pill-shaped (i.e. circle when square). Light colours
-         get a divider-coloured border so they show against
+         pill-shaped (i.e. circle when square). Light colors
+         get a divider-colored border so they show against
          pale backgrounds; dark ones get transparent. */
       .swatches {
         display: flex;
@@ -656,9 +656,9 @@ class ColorSplashCard extends HTMLElement {
     }
 
     // Lightbulb tint — fill the icon with the last selected
-    // colour. Retained even while a show is running because
+    // color. Retained even while a show is running because
     // dismissing the effect (effect: None) returns the fixture
-    // to that colour, so it represents the "underlying" state.
+    // to that color, so it represents the "underlying" state.
     let iconStyle = "";
     let iconClass = "tile-icon";
     if (isOn && rgbColor) {
@@ -692,7 +692,7 @@ class ColorSplashCard extends HTMLElement {
     }
 
     // Solid swatches — circular discs with HA-style border
-    // handling for light colours.
+    // handling for light colors.
     const solidSwatches = SOLIDS.map((s) => {
       const isLight = luminosity(s.hex) > 0.8;
       return `<button class="swatch ${isLight ? "light" : ""}"
@@ -706,8 +706,8 @@ class ColorSplashCard extends HTMLElement {
     const returnSwatch = `
       <button class="swatch return"
               data-action="return"
-              title="Return — replay last-locked colour"
-              aria-label="Return to last-locked colour">
+              title="Return — replay last-locked color"
+              aria-label="Return to last-locked color">
         <span class="badge">R</span>
       </button>`;
 
@@ -775,12 +775,12 @@ class ColorSplashCard extends HTMLElement {
           <div class="toggle-indicator"></div>
         </button>
 
-        <div class="section-label">Colour</div>
+        <div class="section-label">Color</div>
         <div class="wheel-wrap" data-wheel>
           <img class="wheel"
                src="${WHEEL_IMAGE_CACHE}"
                draggable="false"
-               alt="Colour wheel" />
+               alt="Color wheel" />
           <div class="wheel-cursor ${cursorActive}"
                style="${cursorStyle}"></div>
         </div>
@@ -804,7 +804,7 @@ class ColorSplashCard extends HTMLElement {
         </div>
 
         <button class="lock-btn" data-action="lock">
-          Lock current colour
+          Lock current color
         </button>
       </div>
     `;
@@ -834,7 +834,7 @@ class ColorSplashCard extends HTMLElement {
 
       case "solid": {
         // Route through light.turn_on(rgb_color) so HA records
-        // the colour on the entity (drives the wheel cursor +
+        // the color on the entity (drives the wheel cursor +
         // tile state). The firmware's pick_color resolves the
         // exact preset RGB to the same solid byte that
         // button.press would have fired, thanks to the
@@ -900,7 +900,7 @@ class ColorSplashCard extends HTMLElement {
     }
   }
 
-  // ---- colour wheel pointer handling ----
+  // ---- color wheel pointer handling ----
 
   _wireWheel() {
     const wrap = this.shadowRoot.querySelector("[data-wheel]");
@@ -915,13 +915,13 @@ class ColorSplashCard extends HTMLElement {
     e.preventDefault();
     this._wheelDragging = true;
     e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
-    this._emitWheelColour(e, true);
+    this._emitWheelColor(e, true);
   }
 
   _onWheelMove(e) {
     if (!this._wheelDragging) return;
     e.preventDefault();
-    this._emitWheelColour(e, false);
+    this._emitWheelColor(e, false);
   }
 
   _onWheelUp(e) {
@@ -929,10 +929,10 @@ class ColorSplashCard extends HTMLElement {
     this._wheelDragging = false;
     // Final commit on release, ignoring throttle so the last
     // position always lands.
-    this._emitWheelColour(e, true);
+    this._emitWheelColor(e, true);
   }
 
-  _emitWheelColour(e, force) {
+  _emitWheelColor(e, force) {
     const wrap = this.shadowRoot.querySelector("[data-wheel]");
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
@@ -988,7 +988,7 @@ window.customCards.push({
   type: "colorsplash-xg-card",
   name: "ColorSplash XG",
   description:
-      "Pool light controls — big toggle tile, RGB colour wheel, "
+      "Pool light controls — big toggle tile, RGB color wheel, "
       + "solid swatches, custom show dropdown, Lock + Return.",
   preview: false,
 });

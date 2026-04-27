@@ -18,7 +18,7 @@ for the probe details.
 
 **Show-scrub works as a reliable arbitrary-RGB mechanism.** Every
 one of the 7 shows has a deterministic per-replay transition
-envelope: command-to-first-colour timing reproduces with σ ≤ 112 ms
+envelope: command-to-first-color timing reproduces with σ ≤ 112 ms
 across 3 replays per show. The picker tool
 (`tools/pick_color.py`) loads a calibration dataset, finds the
 sample whose observed RGB is closest to a target, and either
@@ -26,7 +26,7 @@ recommends or directly executes a `(start_byte, wait_ms)` recipe.
 
 ### Per-show consistency (3 replays each)
 
-| Show | Cmd→colour mean | σ | Picker precision (95% CI) |
+| Show | Cmd→color mean | σ | Picker precision (95% CI) |
 |---|---:|---:|---:|
 | Super Nova | 4408 ms | 29 ms | ±58 ms |
 | Desert Skies | 6341 ms | 30 ms | ±60 ms |
@@ -40,9 +40,9 @@ Every show landed at GOOD on the analyzer's verdict
 threshold (σ ≤ 200 ms). Five of seven shows are tight (σ ≤ 65
 ms); two show somewhat looser timing (Tidal Wave / Northern
 Lights, both ≤ 225 ms 95 % CI), still well under the windows
-where the show's colour visibly changes.
+where the show's color visibly changes.
 
-The "old-colour persists" pre-blackout latency is consistently
+The "old-color persists" pre-blackout latency is consistently
 ~50–70 ms across all shows (σ = 5–6 ms each) — that's the
 fixed BLE write + BGScript dispatch delay before the controller
 acts on the new command.
@@ -57,7 +57,7 @@ acts on the new command.
   calibration path: post-process a video file (e.g. an iPhone
   Final Cut Camera recording with locked WB + exposure) +
   events log to produce the same JSON shape but with cleaner
-  colour data.
+  color data.
 - **`tools/replay_probe.py`** — drives one show N times back-
   to-back and samples cv2 throughout. Used for measuring
   per-show timing reproducibility.
@@ -80,13 +80,13 @@ acts on the new command.
 - **Skip-early window** (default 2500 ms): samples in the
   pre-blackout / firmware-dispatch window are excluded from
   matching, so the picker never recommends a `wait_ms` value
-  that lands during the controller's old-colour-persists period.
+  that lands during the controller's old-color-persists period.
 - **Replay-mode-aware**: the picker recognises `<show> #N`
   keys from `replay_probe.py` output and matches the base
   show name, so a single dataset can mix calibration data and
   replay-test data without confusing the search.
 
-### Reachable colour gamut
+### Reachable color gamut
 
 The fixture + pool reflectance combination determines what RGB
 targets are actually attainable. From the
@@ -171,11 +171,11 @@ out-of-range bytes back into them.
 
 Writing 0x1c (which aliases to Return) produced a fixture
 blackout of approximately 20 seconds before the visible Return
-colour appeared — well outside the documented 5-10 s
+color appeared — well outside the documented 5-10 s
 solid-to-solid transition envelope (`docs/PROTOCOL.md` §Visual
 transition latency). The fixture initially appeared to have
 entered Standby; only after the extended blackout did the locked
-colour come up.
+color come up.
 
 This may indicate that the controller's input-sanitization path
 for out-of-range bytes adds extra processing time, or that there
@@ -233,7 +233,7 @@ chars, the command char at 0x000f, and its CCCD).
   camera. Re-calibration is required for a different
   installation.
 - The picker operates entirely in observed-RGB space — no
-  display-referred colour management or perceptual distance
+  display-referred color management or perceptual distance
   metrics (Lab, CIEDE2000) are applied. Euclidean RGB distance
   is fine for "look-like" matching against the camera-observed
   reference, which is the picker's actual purpose.

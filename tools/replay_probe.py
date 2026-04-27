@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Drive the bridge through N back-to-back replays of a single show
-or solid colour, sampling a camera throughout to capture the timing
+or solid color, sampling a camera throughout to capture the timing
 envelope of each replay. Used to measure replay-to-replay timing
 consistency of the controller's transition envelope per command —
 i.e. is the AC-interrupt-pattern dispatch deterministic, or does it
@@ -9,7 +9,7 @@ drift?
 For timing analysis we don't need colorimetric accuracy; the FaceTime
 camera (or any cv2-openable camera) is fine. The metric we care
 about is when brightness drops (transition starts) and rises (new
-colour appears) — auto-WB drift doesn't change those events.
+color appears) — auto-WB drift doesn't change those events.
 
 Output JSON has the same shape as
 `tools/extract_colors_from_video.py`'s output, with each replay as

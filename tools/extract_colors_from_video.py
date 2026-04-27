@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Post-process a video file (e.g. from Final Cut Pro with manually
 locked white balance + exposure) and align it to a calibration events
-log to produce high-quality per-show colour timelines.
+log to produce high-quality per-show color timelines.
 
 Pipeline:
 

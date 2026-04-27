@@ -64,7 +64,7 @@ def decimate(samples: list[dict], interval_ms: int,
              skip_ms: int) -> list[dict]:
     """Return one sample per `interval_ms` window, starting at
     `skip_ms`. Picks the sample whose t_ms is closest to each grid
-    point so the kept colours track real fixture state."""
+    point so the kept colors track real fixture state."""
     if not samples:
         return []
     samples_sorted = sorted(samples, key=lambda s: s["t_ms"])
@@ -179,7 +179,7 @@ def main() -> int:
 
     lines.append("// Ambient (Standby) baseline — the camera reading "
                  "with the fixture off.")
-    lines.append("// Used by the picker as a 'this colour is "
+    lines.append("// Used by the picker as a 'this color is "
                  "unreachable' floor.")
     lines.append(f"constexpr uint8_t AMBIENT_R = {ar};")
     lines.append(f"constexpr uint8_t AMBIENT_G = {ag};")

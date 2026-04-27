@@ -68,10 +68,10 @@ SHOW_EFFECTS: list[tuple[str, int]] = [
 
 # Phase 4b experimental flag — when true, the light advertises
 # ColorMode::RGB in addition to ON_OFF, so HA's standard light card
-# shows a colour wheel that drives the embedded show-scrub picker
+# shows a color wheel that drives the embedded show-scrub picker
 # (see firmware/esphome/components/colorsplash_xg/show_color_lut.h).
 # Default off — issue #54 keeps the classic effects-only interface
-# as the stable default since the colour gamut is constrained and
+# as the stable default since the color gamut is constrained and
 # can confuse users who expect arbitrary RGB to "just work".
 CONF_RGB_MODE = "rgb_mode"
 

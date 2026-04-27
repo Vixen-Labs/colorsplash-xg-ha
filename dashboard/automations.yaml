@@ -15,7 +15,7 @@
 # preferred shade of light at dusk, off again at dawn.
 
 - alias: "Pool light on at sunset"
-  description: "Turn pool light on (last colour) at sunset"
+  description: "Turn pool light on (last color) at sunset"
   trigger:
     - platform: sun
       event: sunset
@@ -108,30 +108,30 @@
 # Useful for capturing a "favourite moment" mid-show and replaying
 # it later.
 
-- alias: "Pool: capture current colour as 'last locked'"
-  description: "Press to save the colour the fixture is showing now"
+- alias: "Pool: capture current color as 'last locked'"
+  description: "Press to save the color the fixture is showing now"
   trigger:
     - platform: state
-      entity_id: input_button.pool_capture_colour  # add to HA
+      entity_id: input_button.pool_capture_color  # add to HA
   action:
     - service: button.press
       target:
         entity_id: button.pool_color_lock
 
-- alias: "Pool: replay last-locked colour"
-  description: "Press to recall the colour previously locked"
+- alias: "Pool: replay last-locked color"
+  description: "Press to recall the color previously locked"
   trigger:
     - platform: state
-      entity_id: input_button.pool_recall_colour
+      entity_id: input_button.pool_recall_color
   action:
     - service: button.press
       target:
         entity_id: button.pool_color_return
 
-# ─── Phase 4b RGB colour-pick examples (experimental) ─────────────
+# ─── Phase 4b RGB color-pick examples (experimental) ─────────────
 # Only works on firmware including the embedded LUT (commit
 # 2028b2e or later). Calls the bridge's pool_set_rgb service
-# to drive the fixture to a specific observed colour.
+# to drive the fixture to a specific observed color.
 
 - alias: "Pool: warm orange at sunset transition"
   description: >

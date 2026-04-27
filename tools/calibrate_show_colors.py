@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Characterise the LPL-XG-CTRL-1's per-show colour cycles via the Mac
+"""Characterise the LPL-XG-CTRL-1's per-show color cycles via the Mac
 laptop camera, by driving the bridge through every preset and recording
 how the fixture's light reflects off the pool surface.
 
@@ -15,7 +15,7 @@ The output is a JSON file that maps:
 Phase 4b RGB picker: a separate tool consumes this JSON and, given a
 target observed RGB, returns the (start_byte, wait_ms) pair whose
 sample sits closest in observed-RGB space. The fixture is then driven
-to that show + offset and Lock is fired to freeze the colour.
+to that show + offset and Lock is fired to freeze the color.
 
 Workflow this tool implements:
 
@@ -292,12 +292,12 @@ async def sample_show(bridge: "BridgeClient", camera: cv2.VideoCapture,
     fixture's response. t=0 in the returned samples is the moment the
     BLE write was issued (so t_ms in the JSON corresponds directly to
     wait_ms in the future picker — picker can do
-    `lock at t = wait_ms` to recover the colour observed at that point
+    `lock at t = wait_ms` to recover the color observed at that point
     in this sample).
 
     Captures the entire transition envelope: t=0..~0.5s is BLE write
     in flight, t=~0.5..~10s is the fixture's blackout transition,
-    then the show actively cycles through its colour sequence.
+    then the show actively cycles through its color sequence.
 
     Replaces the old "send → sleep transition_hold → sample" pattern
     that was missing the entire transition phase and shifting the
@@ -446,7 +446,7 @@ async def run_calibration(args: argparse.Namespace) -> int:
         # Drive the fixture to Arctic White, give the camera time to
         # adapt to that reference, then lock the auto-WB / autofocus /
         # auto-exposure loops so they can't drift during the rest of
-        # the run. If we skipped this, every solid + show colour would
+        # the run. If we skipped this, every solid + show color would
         # shift the camera's WB target and wash out subsequent
         # readings (Brazilian Red came in muted in the un-locked run
         # because the camera had adapted to Parisian Blue first).
@@ -493,7 +493,7 @@ async def run_calibration(args: argparse.Namespace) -> int:
 
         # ---- Phase B: Solids ----
         if not args.skip_solids:
-            print("\n>>> Phase B: 5 solid colours.")
+            print("\n>>> Phase B: 5 solid colors.")
             wait_or_skip("Phase B")
             for byte_val, name in SOLIDS:
                 print(f"\n  -- {name} (0x{byte_val:02x}) --")

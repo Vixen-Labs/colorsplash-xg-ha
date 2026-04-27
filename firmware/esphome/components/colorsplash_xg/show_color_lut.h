@@ -5711,7 +5711,7 @@ constexpr SolidEntry SOLID_LUT[] = {
 constexpr size_t SOLID_LUT_LEN = sizeof(SOLID_LUT) / sizeof(SOLID_LUT[0]);
 
 // Ambient (Standby) baseline — the camera reading with the fixture off.
-// Used by the picker as a 'this colour is unreachable' floor.
+// Used by the picker as a 'this color is unreachable' floor.
 constexpr uint8_t AMBIENT_R = 10;
 constexpr uint8_t AMBIENT_G = 5;
 constexpr uint8_t AMBIENT_B = 1;

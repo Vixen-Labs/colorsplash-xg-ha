@@ -14,10 +14,10 @@ Inputs:
 
 Outputs (stdout):
   - Per-replay metrics:
-      * "old colour persists" duration (t = 0 → first dark frame)
-      * blackout duration (first dark → first new colour)
-      * total command-to-first-colour delay
-      * RGB at the first new-colour sample
+      * "old color persists" duration (t = 0 → first dark frame)
+      * blackout duration (first dark → first new color)
+      * total command-to-first-color delay
+      * RGB at the first new-color sample
   - Across-replay summary (mean ± stdev, min, max)
   - A verdict on whether the timing is reproducible enough for the
     Phase 4b RGB picker.
@@ -46,7 +46,7 @@ def detect_transition(samples: list[dict],
                       ) -> Optional[dict]:
     """Walk one show's per-frame samples (each a dict with t_ms and
     rgb). Find the dark-period start (first dark frame after t=0)
-    and the new-colour appearance (first sustained-bright frame after
+    and the new-color appearance (first sustained-bright frame after
     >=1 s of dark). Return a dict of metrics or None if the pattern
     couldn't be detected."""
     if len(samples) < 30:
@@ -63,7 +63,7 @@ def detect_transition(samples: list[dict],
     if dark_idx is None:
         return None
 
-    # Walk forward to first sustained colour (>= 0.5 s above
+    # Walk forward to first sustained color (>= 0.5 s above
     # color_thresh after at least 1 s of dark).
     n = len(samples)
     color_idx = None
@@ -118,11 +118,11 @@ def verdict(per_replay: list[dict]) -> str:
     if cmd_sd <= 500:
         return (f"USABLE — command-to-color sd is {cmd_sd:.0f} ms. "
                 f"Picker should leave a ~{int(3 * cmd_sd)} ms "
-                f"tolerance window when locking onto a target colour.")
+                f"tolerance window when locking onto a target color.")
     return (f"POOR — command-to-color sd is {cmd_sd:.0f} ms (>500 ms). "
             f"The transition envelope drifts too much for a "
             f"deterministic picker; consider photodiode sync or "
-            f"in-loop colour feedback (Phase 4c).")
+            f"in-loop color feedback (Phase 4c).")
 
 
 def main() -> int:
@@ -167,7 +167,7 @@ def main() -> int:
         result = detect_transition(samples, ambient)
         if result is None:
             print(f"  {key:10s}  (transition not detected — fewer "
-                  f"frames than expected, or no dark→colour cycle)")
+                  f"frames than expected, or no dark→color cycle)")
             continue
         per_replay.append(result)
         replay_n = key.split("#")[-1]
@@ -190,7 +190,7 @@ def main() -> int:
     print(f"Verdict: {verdict(per_replay)}")
 
     # Bonus: report first-color RGB consistency. If the controller's
-    # AC-interrupt sequence is reproducible, the first new colour
+    # AC-interrupt sequence is reproducible, the first new color
     # the fixture lands on should also be reproducible.
     if len(per_replay) >= 2:
         rs = [r["first_color_rgb"][0] for r in per_replay]

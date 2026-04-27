@@ -27,14 +27,14 @@ HA round-trips.
    stay green.
 4. **Exercise every on-screen control:**
    - On/off switch → fixture goes Standby and back on
-   - Each of the 5 colour swatches → fixture changes to that
-     colour
+   - Each of the 5 color swatches → fixture changes to that
+     color
    - Effect dropdown → pick a show, fixture runs it
    - Lock button → press during a show; verify subsequent Return
-     replays the captured colour
+     replays the captured color
    - Return button → fixture comes back to last-locked
 5. **Bring HA back online.** Confirm the API icon goes green
-   within ~10 s. Pick a colour from HA — verify the touchscreen
+   within ~10 s. Pick a color from HA — verify the touchscreen
    reflects the change (`light.on_state` lambda updates the
    widgets).
 
@@ -48,7 +48,7 @@ Fill in after running the procedure.
 | API offline → status icon | Goes grey within 10 s | _TBD_ |
 | Switch off → fixture | Goes Standby | _TBD_ |
 | Switch on → fixture | Resumes last preset | _TBD_ |
-| Each colour swatch | Drives that colour | _TBD_ |
+| Each color swatch | Drives that color | _TBD_ |
 | Each show effect | Drives that show | _TBD_ |
 | Lock + Return | Save/recall works | _TBD_ |
 | API back online | Icon back to green | _TBD_ |

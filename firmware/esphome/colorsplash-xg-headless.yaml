@@ -48,7 +48,7 @@ api:
   # waits `wait_ms`, then sends Lock (0x0d). With a determinist-
   # ic transition + fixed step duration per show, repeated calls
   # to (start_byte, wait_ms) should land the fixture on the same
-  # colour each time. Used to validate that show-scrub is
+  # color each time. Used to validate that show-scrub is
   # precise enough for an arbitrary-RGB picker (Phase 4b proper)
   # before building the full RGB→(show, offset) mapping.
   #
@@ -144,7 +144,7 @@ light:
     id: pool_light
     name: "Pool Light"
     restore_mode: ALWAYS_OFF
-    # Phase 4b experimental: enable HA's standard colour wheel,
+    # Phase 4b experimental: enable HA's standard color wheel,
     # driven by the bridge's embedded show-scrub picker. See
     # issue #54 — set to `false` (or remove this line) to revert
     # to the classic on/off + named-effects-only interface, which
