@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.8.1";
+const VERSION = "0.8.2";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -98,7 +98,13 @@ const DEFAULTS = {
 };
 
 const WHEEL_SIZE = 220;       // px — outer diameter of the HSV wheel
-const SLIDER_WIDTH = 60;      // px — vertical brightness slider width
+const SLIDER_WIDTH = 100;     // px — vertical slider thickness
+                              // (HA's brightness slider uses 130 px; we
+                              // shrink slightly so the picker row fits
+                              // in a typical Lovelace card width)
+const SLIDER_RADIUS = 28;     // px — heavily rounded, approx HA's 6xl
+const SLIDER_HANDLE_MARGIN = 12;  // px — distance from edge of bar to handle bar
+const SLIDER_HANDLE_HEIGHT = 4;   // px — handle bar thickness
 const BRIGHTNESS_MIN = 0.05;  // floor — V=0 would just be black for any hue
 // Debounce window — after the last pointer interaction on the
 // wheel or slider, wait this long before sending the resolved
@@ -162,6 +168,23 @@ function hsvToRgb(h, s, v) {
     Math.round((g1 + m) * 255),
     Math.round((b1 + m) * 255),
   ];
+}
+
+// Port of the contrast adjustment from HA's
+// ha-state-control-light-brightness: very desaturated colors get
+// either a saturation bump (S→0.4) or a value reduction (V→225/255)
+// for near-whites, so the slider tint stays visible against the
+// card background. Returns adjusted [r, g, b] in 0..255.
+function adjustSliderColor(r, g, b) {
+  let [h, s, v] = rgbToHsv(r, g, b);
+  if (s < 0.4) {
+    if (s < 0.1) {
+      v = 225 / 255;
+    } else {
+      s = 0.4;
+    }
+  }
+  return hsvToRgb(h, s, v);
 }
 
 function rgbToHsv(r, g, b) {
@@ -488,12 +511,16 @@ class ColorSplashCard extends HTMLElement {
       }
 
       /* ─── Brightness slider ────────────────────────────────
-         Modeled on HA's ha-state-control-light-brightness which
-         wraps ha-control-slider in vertical/end mode. Track is
-         tinted with the currently-selected hue (bright at top,
-         dim at bottom); the white handle is a thin horizontal
-         bar at the thumb position. A percentage tooltip appears
-         centered on the slider while the user drags. */
+         Direct port of HA's ha-control-slider (vertical, "start"
+         mode, show-handle) as used by ha-state-control-light-
+         brightness. Two stacked layers — a faded background and
+         a full-opacity bar — share the same colour. The bar's
+         transform shifts it down by (1 - value) of its height,
+         so when value=1 the bar covers the full track and when
+         value=0 it's fully clipped. The handle is a thin white
+         bar drawn near the top of the bar so it always lands at
+         the value-marker. Tooltip lives to the LEFT of the
+         slider and tracks the value vertically. */
       .brightness-wrap {
         position: relative;
         width: ${SLIDER_WIDTH}px;
@@ -502,50 +529,74 @@ class ColorSplashCard extends HTMLElement {
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
+        --cs-color: var(--primary-color, #03a9f4);
+        --cs-value: 1;
+      }
+      .brightness-slider {
+        position: relative;
+        height: 100%;
+        width: 100%;
+        border-radius: ${SLIDER_RADIUS}px;
+        overflow: hidden;
         cursor: pointer;
       }
-      .brightness-track {
+      .brightness-bg {
         position: absolute;
-        inset: 0;
-        border-radius: 16px;
-        border: 1px solid var(--divider-color, rgba(127,127,127,0.3));
-        box-sizing: border-box;
-        overflow: hidden;
-        /* Default = white at top, dark grey at bottom. JS sets
-           --cs-bright + --cs-dim per the active hue. */
-        background: linear-gradient(
-          to bottom,
-          var(--cs-bright, #ffffff) 0%,
-          var(--cs-dim, #1c1c1e) 100%);
-      }
-      .brightness-handle {
-        position: absolute;
-        left: 8px;
-        right: 8px;
-        height: 4px;
-        border-radius: 2px;
-        background: rgba(255, 255, 255, 0.85);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
         top: 0;
-        transform: translateY(-50%);
-        pointer-events: none;
+        left: 0;
+        height: 100%;
+        width: 100%;
+        background: var(--cs-color);
+        opacity: 0.2;
       }
-      .brightness-percent {
+      .brightness-bar {
         position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        background: rgba(0, 0, 0, 0.7);
-        color: #fff;
+        bottom: 0;
+        left: 0;
+        height: 100%;
+        width: 100%;
+        background: var(--cs-color);
+        transform: translate3d(0,
+          calc((1 - var(--cs-value)) * 100%), 0);
+        transition: transform 60ms linear;
+      }
+      .brightness-bar.dragging {
+        transition: none;
+      }
+      /* Handle bar at the top of the filled portion. Sits inside
+         the bar so it moves with the value. */
+      .brightness-bar::after {
+        content: "";
+        position: absolute;
+        top: ${SLIDER_HANDLE_MARGIN}px;
+        left: 0;
+        right: 0;
+        margin: auto;
+        width: 50%;
+        height: ${SLIDER_HANDLE_HEIGHT}px;
+        border-radius: ${SLIDER_HANDLE_HEIGHT}px;
+        background: #ffffff;
+      }
+      /* Tooltip — positioned left of the slider, vertical pos
+         tracks the value. Visible only while dragging. */
+      .brightness-tooltip {
+        position: absolute;
+        right: calc(100% + 8px);
+        bottom: calc(var(--cs-value) * 100% - 12px);
+        background: var(--clear-background-color,
+                        var(--card-background-color, #1c1c1e));
+        color: var(--primary-text-color, #fff);
         padding: 4px 10px;
-        border-radius: 8px;
-        font-size: 0.8em;
-        font-weight: 600;
+        border-radius: 10px;
+        font-size: 0.9em;
+        font-weight: 500;
+        white-space: nowrap;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
         pointer-events: none;
         opacity: 0;
-        transition: opacity 0.12s ease;
+        transition: opacity 180ms ease, bottom 60ms linear;
       }
-      .brightness-percent.active {
+      .brightness-tooltip.visible {
         opacity: 1;
       }
 
@@ -804,21 +855,17 @@ class ColorSplashCard extends HTMLElement {
                     `background:rgb(${rgbColor.join(",")});`;
       cursorActive = "active";
     }
-    const brightnessThumbTop =
-        ((1 - brightnessVal) * WHEEL_SIZE).toFixed(1);
     const brightnessPct = Math.round(brightnessVal * 100);
 
-    // Slider track tint: bright (V=1) at top, dim (V=BRIGHTNESS_MIN)
-    // at bottom, both at the current hue+sat. Falls back to a
-    // neutral white→dark when no hue is locked in yet.
-    let trackTintStyle = "";
+    // CSS vars for the slider: --cs-value is 0..1 driving bar
+    // position via translate3d; --cs-color is the contrast-
+    // adjusted active hue (matches ha-state-control-light-
+    // brightness's color computation).
+    let trackTintStyle = `--cs-value:${brightnessVal};`;
     if (rgbColor) {
-      const [hh, ss] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
-      const [br, bg, bb] = hsvToRgb(hh, ss, 1);
-      const [dr, dg, db] = hsvToRgb(hh, ss, BRIGHTNESS_MIN);
-      trackTintStyle =
-          `--cs-bright:rgb(${br},${bg},${bb});` +
-          `--cs-dim:rgb(${dr},${dg},${db});`;
+      const [cR, cG, cB] = adjustSliderColor(
+          rgbColor[0], rgbColor[1], rgbColor[2]);
+      trackTintStyle += `--cs-color:rgb(${cR},${cG},${cB});`;
     }
 
     // Solid swatches — circular discs with HA-style border
@@ -915,15 +962,14 @@ class ColorSplashCard extends HTMLElement {
             <div class="wheel-cursor ${cursorActive}"
                  style="${cursorStyle}"></div>
           </div>
-          <div class="brightness-wrap" data-brightness
+          <div class="brightness-wrap"
+               style="${trackTintStyle}"
                aria-label="Brightness">
-            <div class="brightness-track"
-                 style="${trackTintStyle}"></div>
-            <div class="brightness-handle"
-                 style="top:${brightnessThumbTop}px;"></div>
-            <div class="brightness-percent">
-              ${brightnessPct}%
+            <div class="brightness-slider" data-brightness>
+              <div class="brightness-bg"></div>
+              <div class="brightness-bar"></div>
             </div>
+            <div class="brightness-tooltip">${brightnessPct}%</div>
           </div>
         </div>
 
@@ -1162,10 +1208,9 @@ class ColorSplashCard extends HTMLElement {
     // dimmed per the slider.
     const v = Math.max(BRIGHTNESS_MIN, this._currentBrightness());
     const [R, G, B] = hsvToRgb(h, s, v);
-    // Cursor dot + slider track tint use V=1 colors so the
-    // chroma stays visible regardless of the slider position.
+    // Cursor dot + slider tint use the V=1 chroma so the wheel
+    // selection stays visible regardless of the slider value.
     const [rW, gW, bW] = hsvToRgb(h, s, 1);
-    const [rD, gD, bD] = hsvToRgb(h, s, BRIGHTNESS_MIN);
 
     // Live-update the cursor dot without a full re-render.
     const cursor = this.shadowRoot.querySelector(".wheel-cursor");
@@ -1175,11 +1220,12 @@ class ColorSplashCard extends HTMLElement {
       cursor.style.top = `${y + r}px`;
       cursor.style.background = `rgb(${rW},${gW},${bW})`;
     }
-    // Live-update the slider track tint to follow the new hue.
-    const track = this.shadowRoot.querySelector(".brightness-track");
-    if (track) {
-      track.style.setProperty("--cs-bright", `rgb(${rW},${gW},${bW})`);
-      track.style.setProperty("--cs-dim", `rgb(${rD},${gD},${bD})`);
+    // Live-update the slider tint to follow the new hue. Run the
+    // same contrast adjustment HA's brightness slider uses.
+    const sliderWrap = this.shadowRoot.querySelector(".brightness-wrap");
+    if (sliderWrap) {
+      const [cR, cG, cB] = adjustSliderColor(rW, gW, bW);
+      sliderWrap.style.setProperty("--cs-color", `rgb(${cR},${cG},${cB})`);
     }
 
     this._scheduleSend([R, G, B]);
@@ -1189,8 +1235,10 @@ class ColorSplashCard extends HTMLElement {
     e.preventDefault();
     this._brightnessDragging = true;
     e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
-    const pct = this.shadowRoot.querySelector(".brightness-percent");
-    if (pct) pct.classList.add("active");
+    const bar = this.shadowRoot.querySelector(".brightness-bar");
+    if (bar) bar.classList.add("dragging");
+    const tip = this.shadowRoot.querySelector(".brightness-tooltip");
+    if (tip) tip.classList.add("visible");
     this._emitBrightness(e, true);
   }
 
@@ -1203,30 +1251,29 @@ class ColorSplashCard extends HTMLElement {
   _onBrightUp(e) {
     if (!this._brightnessDragging) return;
     this._brightnessDragging = false;
-    const pct = this.shadowRoot.querySelector(".brightness-percent");
-    if (pct) pct.classList.remove("active");
+    const bar = this.shadowRoot.querySelector(".brightness-bar");
+    if (bar) bar.classList.remove("dragging");
+    const tip = this.shadowRoot.querySelector(".brightness-tooltip");
+    if (tip) tip.classList.remove("visible");
     this._emitBrightness(e, true);
   }
 
   _emitBrightness(e, force) {
-    const wrap = this.shadowRoot.querySelector("[data-brightness]");
-    if (!wrap) return;
-    const rect = wrap.getBoundingClientRect();
+    const slider = this.shadowRoot.querySelector("[data-brightness]");
+    if (!slider) return;
+    const rect = slider.getBoundingClientRect();
     const yClamped = Math.max(0,
         Math.min(rect.height, e.clientY - rect.top));
     const v = Math.max(BRIGHTNESS_MIN, 1 - (yClamped / rect.height));
     this._lastV = v;
 
-    // Live-update the handle bar without a full re-render.
-    const handle = this.shadowRoot.querySelector(".brightness-handle");
-    if (handle) {
-      handle.style.top = `${yClamped}px`;
-    }
-    // Live-update the percentage tooltip text.
-    const pct = this.shadowRoot.querySelector(".brightness-percent");
-    if (pct) {
-      pct.textContent = `${Math.round(v * 100)}%`;
-    }
+    // Live-update --cs-value on the wrap so both the bar
+    // transform and the tooltip's vertical position track.
+    const wrap = this.shadowRoot.querySelector(".brightness-wrap");
+    if (wrap) wrap.style.setProperty("--cs-value", v.toFixed(3));
+    // Live-update tooltip text.
+    const tip = this.shadowRoot.querySelector(".brightness-tooltip");
+    if (tip) tip.textContent = `${Math.round(v * 100)}%`;
 
     // Reuse the most recent hue/sat from the wheel; if the user
     // hasn't picked one this session, derive from rgb_color.
