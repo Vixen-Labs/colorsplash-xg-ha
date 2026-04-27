@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.7";
+const VERSION = "0.8.0";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -99,6 +99,7 @@ const DEFAULTS = {
 
 const WHEEL_SIZE = 220;     // px — outer diameter of the HSV wheel
 const WHEEL_THROTTLE = 90;  // ms between rgb_color writes during drag
+const BRIGHTNESS_MIN = 0.05;  // floor — V=0 would just be black for any hue
 
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -228,8 +229,12 @@ class ColorSplashCard extends HTMLElement {
     this._lastRenderedKey = "";
     this._effectsOpen = false;
     this._wheelDragging = false;
+    this._brightnessDragging = false;
     this._lastWheelEmit = 0;
     this._wheelCursor = null;  // {hue, sat} or null
+    // Last (h, s) the user picked from the wheel — kept so a
+    // brightness drag re-emits the same hue with the new V.
+    this._lastHs = null;
 
     if (!WHEEL_IMAGE_CACHE) {
       WHEEL_IMAGE_CACHE = buildWheelDataUrl(WHEEL_SIZE);
@@ -423,6 +428,15 @@ class ColorSplashCard extends HTMLElement {
         margin: 18px 0 10px;
       }
 
+      /* ─── Color picker row (wheel + brightness slider) ──── */
+      .picker-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        margin: 4px 0 8px;
+      }
+
       /* ─── Color wheel ──────────────────────────────────────
          Pre-rendered HSV wheel; the cursor dot is positioned
          absolutely over it to indicate the current selection. */
@@ -430,7 +444,7 @@ class ColorSplashCard extends HTMLElement {
         position: relative;
         width: ${WHEEL_SIZE}px;
         height: ${WHEEL_SIZE}px;
-        margin: 4px auto 8px;
+        flex: 0 0 auto;
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
@@ -458,6 +472,42 @@ class ColorSplashCard extends HTMLElement {
       }
       .wheel-cursor.active {
         opacity: 1;
+      }
+
+      /* ─── Brightness slider ────────────────────────────────
+         Vertical pill matching the wheel's height. Black-to-
+         white gradient; thumb position reflects HSV V derived
+         from the active rgb_color. */
+      .brightness-wrap {
+        position: relative;
+        width: 30px;
+        height: ${WHEEL_SIZE}px;
+        flex: 0 0 auto;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        cursor: pointer;
+      }
+      .brightness-track {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: linear-gradient(to bottom, #ffffff, #000000);
+        border: 1px solid var(--divider-color, rgba(127,127,127,0.4));
+        box-sizing: border-box;
+      }
+      .brightness-thumb {
+        position: absolute;
+        left: 50%;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid var(--divider-color,
+                              rgba(127,127,127,0.5));
+        box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+        transform: translate(-50%, -50%);
+        pointer-events: none;
       }
 
       /* ─── Swatch grid ─────────────────────────────────────
@@ -502,6 +552,13 @@ class ColorSplashCard extends HTMLElement {
         justify-content: center;
         --mdc-icon-size: 22px;
         color: var(--primary-text-color, #fff);
+      }
+      /* mdi:lock-reset has the recall arrow on the right side,
+         which shifts the visual center off to the right. Nudge
+         the glyph 2 px left so the lock circle inside the icon
+         sits concentric with the swatch circle. */
+      .swatch.return ha-icon {
+        transform: translateX(-2px);
       }
 
       /* ─── Effect dropdown ───────────────────────────────── */
@@ -659,24 +716,42 @@ class ColorSplashCard extends HTMLElement {
     // color. Retained even while a show is running because
     // dismissing the effect (effect: None) returns the fixture
     // to that color, so it represents the "underlying" state.
+    //
+    // Background tint inverts based on lightness: dark colors get
+    // a faint same-hue wash, light/white colors get a darkened
+    // version of the same hue so the (light-colored) bulb stays
+    // readable against it.
     let iconStyle = "";
     let iconClass = "tile-icon";
     if (isOn && rgbColor) {
-      const rgbCss = `rgb(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]})`;
-      const rgbBg = `rgba(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]},0.22)`;
-      iconStyle = `color:${rgbCss};background:${rgbBg};`;
-      if (luminosityRgb(rgbColor[0], rgbColor[1], rgbColor[2]) > 0.8) {
+      const [rR, rG, rB] = rgbColor;
+      const rgbCss = `rgb(${rR},${rG},${rB})`;
+      const isLight = luminosityRgb(rR, rG, rB) > 0.8;
+      let bgCss;
+      if (isLight) {
+        const dr = Math.round(rR * 0.30);
+        const dg = Math.round(rG * 0.30);
+        const db = Math.round(rB * 0.30);
+        bgCss = `rgb(${dr},${dg},${db})`;
         iconClass = "tile-icon light";
+      } else {
+        bgCss = `rgba(${rR},${rG},${rB},0.22)`;
       }
+      iconStyle = `color:${rgbCss};background:${bgCss};`;
     }
 
     // Wheel cursor position. Stays pinned to the last rgb_color
     // even during a show, because that's where the fixture
-    // returns when the effect is cleared.
+    // returns when the effect is cleared. The wheel itself is
+    // drawn at V=1, so the cursor is placed using the (h, s)
+    // derived from the rgb_color regardless of its V — otherwise
+    // a dim color would land outside the visible disc.
     let cursorStyle = "";
     let cursorActive = "";
+    let brightnessVal = 1;  // 0..1 — drives slider thumb position
     if (isOn && rgbColor) {
-      const [h, s] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
+      const [h, s, v] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
+      brightnessVal = v;
       // h: 0° = right (red), sweeps counter-clockwise. Invert
       // the buildWheel mapping by using cos for x and -sin for
       // y (CSS y is flipped).
@@ -690,6 +765,8 @@ class ColorSplashCard extends HTMLElement {
                     `background:rgb(${rgbColor.join(",")});`;
       cursorActive = "active";
     }
+    const brightnessThumbTop =
+        ((1 - brightnessVal) * WHEEL_SIZE).toFixed(1);
 
     // Solid swatches — circular discs with HA-style border
     // handling for light colors.
@@ -776,13 +853,21 @@ class ColorSplashCard extends HTMLElement {
         </button>
 
         <div class="section-label">Color</div>
-        <div class="wheel-wrap" data-wheel>
-          <img class="wheel"
-               src="${WHEEL_IMAGE_CACHE}"
-               draggable="false"
-               alt="Color wheel" />
-          <div class="wheel-cursor ${cursorActive}"
-               style="${cursorStyle}"></div>
+        <div class="picker-row">
+          <div class="wheel-wrap" data-wheel>
+            <img class="wheel"
+                 src="${WHEEL_IMAGE_CACHE}"
+                 draggable="false"
+                 alt="Color wheel" />
+            <div class="wheel-cursor ${cursorActive}"
+                 style="${cursorStyle}"></div>
+          </div>
+          <div class="brightness-wrap" data-brightness
+               aria-label="Brightness">
+            <div class="brightness-track"></div>
+            <div class="brightness-thumb"
+                 style="top:${brightnessThumbTop}px;"></div>
+          </div>
         </div>
 
         <div class="swatches">
@@ -901,15 +986,37 @@ class ColorSplashCard extends HTMLElement {
     }
   }
 
-  // ---- color wheel pointer handling ----
+  // ---- color wheel + brightness slider pointer handling ----
 
   _wireWheel() {
-    const wrap = this.shadowRoot.querySelector("[data-wheel]");
-    if (!wrap) return;
-    wrap.addEventListener("pointerdown", (e) => this._onWheelDown(e));
-    wrap.addEventListener("pointermove", (e) => this._onWheelMove(e));
-    wrap.addEventListener("pointerup",   (e) => this._onWheelUp(e));
-    wrap.addEventListener("pointercancel", (e) => this._onWheelUp(e));
+    const wheel = this.shadowRoot.querySelector("[data-wheel]");
+    if (wheel) {
+      wheel.addEventListener("pointerdown", (e) => this._onWheelDown(e));
+      wheel.addEventListener("pointermove", (e) => this._onWheelMove(e));
+      wheel.addEventListener("pointerup",   (e) => this._onWheelUp(e));
+      wheel.addEventListener("pointercancel", (e) => this._onWheelUp(e));
+    }
+    const bright = this.shadowRoot.querySelector("[data-brightness]");
+    if (bright) {
+      bright.addEventListener("pointerdown", (e) => this._onBrightDown(e));
+      bright.addEventListener("pointermove", (e) => this._onBrightMove(e));
+      bright.addEventListener("pointerup",   (e) => this._onBrightUp(e));
+      bright.addEventListener("pointercancel", (e) => this._onBrightUp(e));
+    }
+  }
+
+  // Returns the current V (0..1) implied by the slider thumb on
+  // the most recent render. Falls back to 1 if no rgb_color is
+  // set yet.
+  _currentBrightness() {
+    const lightState = this._hass &&
+        this._hass.states[this._config.light_entity];
+    const rgb = lightState && lightState.attributes &&
+        Array.isArray(lightState.attributes.rgb_color)
+            ? lightState.attributes.rgb_color : null;
+    if (!rgb) return 1;
+    const [, , v] = rgbToHsv(rgb[0], rgb[1], rgb[2]);
+    return v;
   }
 
   _onWheelDown(e) {
@@ -953,7 +1060,16 @@ class ColorSplashCard extends HTMLElement {
     const angleRad = Math.atan2(-y, x);
     const h = ((angleRad * 180 / Math.PI) + 360) % 360;
     const s = Math.min(1, dist / r);
-    const [R, G, B] = hsvToRgb(h, s, 1);
+    this._lastHs = [h, s];
+    // Apply the current slider brightness when sending — the
+    // wheel itself is rendered at V=1 (so cursor placement stays
+    // visible), but the actual color carried to the fixture is
+    // dimmed per the slider.
+    const v = Math.max(BRIGHTNESS_MIN, this._currentBrightness());
+    const [R, G, B] = hsvToRgb(h, s, v);
+    // Cursor dot uses V=1 colors so it remains visible against
+    // the wheel even when the user has dimmed the fixture.
+    const [rW, gW, bW] = hsvToRgb(h, s, 1);
 
     // Live-update the cursor dot without a full re-render.
     const cursor = this.shadowRoot.querySelector(".wheel-cursor");
@@ -961,7 +1077,7 @@ class ColorSplashCard extends HTMLElement {
       cursor.classList.add("active");
       cursor.style.left = `${x + r}px`;
       cursor.style.top = `${y + r}px`;
-      cursor.style.background = `rgb(${R},${G},${B})`;
+      cursor.style.background = `rgb(${rW},${gW},${bW})`;
     }
 
     const now = Date.now();
@@ -971,6 +1087,66 @@ class ColorSplashCard extends HTMLElement {
     const cfg = this._config;
     const hass = this._hass;
     if (!hass) return;
+    hass.callService("light", "turn_on", {
+      entity_id: cfg.light_entity,
+      rgb_color: [R, G, B],
+    });
+  }
+
+  _onBrightDown(e) {
+    e.preventDefault();
+    this._brightnessDragging = true;
+    e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+    this._emitBrightness(e, true);
+  }
+
+  _onBrightMove(e) {
+    if (!this._brightnessDragging) return;
+    e.preventDefault();
+    this._emitBrightness(e, false);
+  }
+
+  _onBrightUp(e) {
+    if (!this._brightnessDragging) return;
+    this._brightnessDragging = false;
+    this._emitBrightness(e, true);
+  }
+
+  _emitBrightness(e, force) {
+    const wrap = this.shadowRoot.querySelector("[data-brightness]");
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const yClamped = Math.max(0,
+        Math.min(rect.height, e.clientY - rect.top));
+    const v = Math.max(BRIGHTNESS_MIN, 1 - (yClamped / rect.height));
+
+    // Live-update the thumb without a full re-render.
+    const thumb = this.shadowRoot.querySelector(".brightness-thumb");
+    if (thumb) {
+      thumb.style.top = `${yClamped}px`;
+    }
+
+    const now = Date.now();
+    if (!force && now - this._lastWheelEmit < WHEEL_THROTTLE) return;
+    this._lastWheelEmit = now;
+
+    const cfg = this._config;
+    const hass = this._hass;
+    if (!hass) return;
+
+    // Reuse the most recent hue/sat from the wheel; if the user
+    // hasn't picked one this session, derive from rgb_color.
+    let h, s;
+    if (this._lastHs) {
+      [h, s] = this._lastHs;
+    } else {
+      const lightState = hass.states[cfg.light_entity];
+      const rgb = lightState && lightState.attributes &&
+          Array.isArray(lightState.attributes.rgb_color)
+              ? lightState.attributes.rgb_color : [255, 255, 255];
+      [h, s] = rgbToHsv(rgb[0], rgb[1], rgb[2]);
+    }
+    const [R, G, B] = hsvToRgb(h, s, v);
     hass.callService("light", "turn_on", {
       entity_id: cfg.light_entity,
       rgb_color: [R, G, B],
