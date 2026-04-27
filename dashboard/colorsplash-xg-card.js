@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.5";
+const VERSION = "0.7.6";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -350,10 +350,17 @@ class ColorSplashCard extends HTMLElement {
         transition: background-color 0.18s ease, color 0.18s ease;
       }
       /* Mirrors the .swatch.light convention: when the tile is
-         showing a light/white tint, give it a divider-coloured
-         outline so it reads cleanly on light backgrounds. */
-      .tile-icon.light {
-        border-color: var(--divider-color, rgba(127,127,127,0.4));
+         showing a light/white tint, the icon itself gets a
+         divider-coloured outline so the bulb shape stays
+         readable. ha-icon renders as a filled SVG with no
+         native stroke, so we fake one via four offset
+         drop-shadow filters. */
+      .tile-icon.light ha-icon {
+        filter:
+          drop-shadow(1px 0 0 var(--divider-color, rgba(127,127,127,0.7)))
+          drop-shadow(-1px 0 0 var(--divider-color, rgba(127,127,127,0.7)))
+          drop-shadow(0 1px 0 var(--divider-color, rgba(127,127,127,0.7)))
+          drop-shadow(0 -1px 0 var(--divider-color, rgba(127,127,127,0.7)));
       }
       .tile-text {
         flex: 1 1 auto;
