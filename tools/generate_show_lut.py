@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 """Generate a compact C++ header from a calibration JSON
 (`tools/show_colors_video.json`) for embedding into the bridge
-firmware. The header exposes:
+firmware.
+
+Color-space note: the JSON stores camera-observed RGB values
+(what the iPhone Final Cut Camera captured of the fixture). For
+the picker to be useful from a Lovelace color wheel, the LUT
+entries need to be in canonical sRGB-ish space — when the user
+asks for #ff0000 they expect the *Brazilian Red* filter, not
+whatever muddy red the camera saw. We anchor the 5 documented
+solids to their canonical RGB names and fit a 3×3 color-
+correction matrix (least-squares against all 5 anchors) that
+maps observed → canonical. The matrix is applied to every show
+sample; the solid entries are written with their exact canonical
+values so a #ff0000 tap from the card lands as an exact match.
+
+The header exposes:
 
     namespace esphome { namespace colorsplash_xg {
       struct LutSample {
@@ -40,6 +54,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 
 SOLID_BYTES = {
     "Parisian Blue": 0x08,
@@ -47,6 +63,17 @@ SOLID_BYTES = {
     "Arctic White": 0x0b,
     "Miami Pink": 0x0c,
     "New Zealand Green": 0x09,
+}
+
+# Canonical RGB values matching what each filter advertises to
+# the user (and what the JS card uses for its solid swatches).
+# These are the fixed targets the CCM stretches to.
+SOLID_CANONICAL = {
+    "Parisian Blue":     (0,   0,   255),
+    "Brazilian Red":     (255, 0,   0),
+    "Arctic White":      (255, 255, 255),
+    "Miami Pink":        (255, 0,   255),
+    "New Zealand Green": (0,   255, 0),
 }
 
 SHOW_BYTES = {
@@ -58,6 +85,48 @@ SHOW_BYTES = {
     "Desert Skies": 0x06,
     "Peruvian Paradise": 0x01,
 }
+
+
+def compute_ccm(observed_solids: dict[str, tuple[int, int, int]]
+                ) -> tuple[np.ndarray, dict[str, tuple[int, int, int]]]:
+    """Solve a 3×3 color-correction matrix M such that
+    M @ observed_anchor ≈ canonical_anchor, in least-squares sense
+    across all 5 documented solids. Returns (M, residuals).
+
+    Residuals are how the matrix predicts each anchor; useful for
+    sanity-checking that the camera response is close enough to
+    linear that one matrix can fit all 5. Big residuals on white
+    or magenta would suggest the camera has non-linear response
+    (HDR / gamma) and a per-channel pre-stage might be needed.
+    """
+    obs_cols, canon_cols = [], []
+    for name, canon in SOLID_CANONICAL.items():
+        if name not in observed_solids:
+            continue
+        obs_cols.append(np.array(observed_solids[name], dtype=float))
+        canon_cols.append(np.array(canon, dtype=float))
+    if len(obs_cols) < 3:
+        raise ValueError(
+            "Need observed RGBs for at least 3 anchor solids; got "
+            f"{len(obs_cols)}.")
+    obs = np.column_stack(obs_cols)        # 3 × N
+    canon = np.column_stack(canon_cols)    # 3 × N
+    # Least-squares: M = canon @ pinv(obs)
+    M = canon @ np.linalg.pinv(obs)
+    residuals = {}
+    for name in observed_solids:
+        if name not in SOLID_CANONICAL:
+            continue
+        pred = M @ np.array(observed_solids[name], dtype=float)
+        residuals[name] = tuple(int(round(x)) for x in pred)
+    return M, residuals
+
+
+def apply_ccm(M: np.ndarray, rgb: tuple[int, int, int]
+              ) -> tuple[int, int, int]:
+    out = M @ np.array(rgb, dtype=float)
+    out = np.clip(out, 0, 255).round().astype(int)
+    return (int(out[0]), int(out[1]), int(out[2]))
 
 
 def decimate(samples: list[dict], interval_ms: int,
@@ -97,7 +166,27 @@ def main() -> int:
 
     data = json.loads(args.inp.read_text())
 
-    # ---- Show samples (decimated) ----
+    # ---- Calibrate: build observed→canonical CCM from solids ----
+    observed_solids = {}
+    for name, rgb in data.get("solids", {}).items():
+        if name in SOLID_CANONICAL:
+            observed_solids[name] = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+    M, residuals = compute_ccm(observed_solids)
+    # Print the calibration so the user can sanity-check before
+    # the firmware flash.
+    print(">>> CCM (least-squares fit, observed → canonical):")
+    for row in M:
+        print(f"      [{row[0]:7.4f}  {row[1]:7.4f}  {row[2]:7.4f}]")
+    print(">>> Anchor residuals after CCM:")
+    for name, canon in SOLID_CANONICAL.items():
+        if name not in residuals:
+            continue
+        pred = residuals[name]
+        err = max(abs(pred[i] - canon[i]) for i in range(3))
+        print(f"      {name:22s}: pred={pred}  target={canon}  "
+              f"max_err={err}")
+
+    # ---- Show samples (decimated, then CCM-stretched) ----
     show_entries: list[tuple[int, int, int, int, int]] = []
     show_summary: list[tuple[str, int]] = []
     for show_name, samples in data.get("shows", {}).items():
@@ -108,21 +197,30 @@ def main() -> int:
         decimated = decimate(samples, args.interval_ms, args.skip_ms)
         show_summary.append((base, len(decimated)))
         for s in decimated:
-            r, g, b = s["rgb"]
+            obs_rgb = (int(s["rgb"][0]), int(s["rgb"][1]),
+                       int(s["rgb"][2]))
+            r, g, b = apply_ccm(M, obs_rgb)
             show_entries.append(
                 (byte, int(s["t_ms"]), r, g, b))
 
-    # ---- Solids ----
+    # ---- Solids: write the CANONICAL values, not the observed
+    # camera values. Solids are by definition the fixed-RGB
+    # targets the CCM was fit to, so storing them as canonical
+    # makes a #ff0000 tap from the card land as an exact distance-0
+    # match (combined with the picker's solid_preference bias).
     solid_entries: list[tuple[int, int, int, int]] = []
-    for name, rgb in data.get("solids", {}).items():
+    for name, canon in SOLID_CANONICAL.items():
         if name not in SOLID_BYTES:
             continue
-        r, g, b = rgb
+        r, g, b = canon
         solid_entries.append((SOLID_BYTES[name], r, g, b))
 
-    # ---- Ambient ----
-    ambient = data.get("ambient_rgb") or [0, 0, 0]
-    ar, ag, ab = ambient
+    # ---- Ambient (apply CCM too so unreachable-floor stays in
+    # the same color space as the show samples). ----
+    ambient_obs = data.get("ambient_rgb") or [0, 0, 0]
+    ar, ag, ab = apply_ccm(M, (int(ambient_obs[0]),
+                                int(ambient_obs[1]),
+                                int(ambient_obs[2])))
 
     # ---- Header text ----
     lines = []
@@ -131,6 +229,22 @@ def main() -> int:
     lines.append(f"// Generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
     lines.append(f"// Decimation: 1 sample per {args.interval_ms} ms, "
                  f"skip first {args.skip_ms} ms.")
+    lines.append("//")
+    lines.append("// Calibration: 3x3 CCM fit observed→canonical via "
+                 "least-squares")
+    lines.append("// over the 5 documented solids. Show samples are "
+                 "stretched by")
+    lines.append("// the matrix; solid entries are the exact canonical "
+                 "values.")
+    lines.append("// CCM (rows):")
+    for row in M:
+        lines.append(f"//   [{row[0]:7.4f}  {row[1]:7.4f}  {row[2]:7.4f}]")
+    lines.append("// Anchor residuals (pred → target):")
+    for name, canon in SOLID_CANONICAL.items():
+        if name not in residuals:
+            continue
+        pred = residuals[name]
+        lines.append(f"//   {name:22s}: pred={pred}  target={canon}")
     lines.append("//")
     lines.append("// DO NOT EDIT — regenerate with:")
     lines.append(f"//   python tools/generate_show_lut.py --in {args.inp} "
