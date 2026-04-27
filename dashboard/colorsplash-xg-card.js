@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.2";
+const VERSION = "0.7.3";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -174,6 +174,10 @@ function rgbToHsv(r, g, b) {
 // Pre-render the HSV wheel into an offscreen canvas exactly once.
 // Returns a data URL that can be set as <img src=...>; embedding
 // as an image avoids re-rasterising on every card render.
+//
+// Orientation matches HA's native ha-state-control-light-color-picker:
+// red sits at 3 o'clock (hue 0°) and hue sweeps counter-clockwise
+// (yellow → green → cyan → blue → magenta → back to red).
 function buildWheelDataUrl(size) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -191,10 +195,10 @@ function buildWheelDataUrl(size) {
         img.data[idx + 3] = 0;
         continue;
       }
-      // Match HA's wheel orientation: 0° = top (red is up), hue
-      // sweeps clockwise. atan2 returns angle from +x axis CCW,
-      // so we shift by 90° and negate to align.
-      const angle = Math.atan2(dx, -dy);  // 0 at top, +ve clockwise
+      // CSS y is flipped (positive y points DOWN). Negate dy so
+      // the angle works in standard math convention: 0 at +x
+      // (right / 3 o'clock), positive angles counter-clockwise.
+      const angle = Math.atan2(-dy, dx);
       const h = ((angle * 180 / Math.PI) + 360) % 360;
       const s = Math.min(1, dist / r);
       const [R, G, B] = hsvToRgb(h, s, 1);
@@ -339,10 +343,6 @@ class ColorSplashCard extends HTMLElement {
         --mdc-icon-size: 24px;
         color: var(--state-icon-color, #a0a0a0);
         transition: background-color 0.18s ease, color 0.18s ease;
-      }
-      .tile.on .tile-icon {
-        background: rgba(255, 200, 80, 0.25);
-        color: var(--state-icon-active-color, #f9a825);
       }
       .tile-text {
         flex: 1 1 auto;
@@ -611,6 +611,7 @@ class ColorSplashCard extends HTMLElement {
   _buildHTML(isOn, activeEffect, lightFound, rgbColor) {
     const cfg = this._config;
     const tileClass = isOn ? "tile on" : "tile";
+    const hasEffect = activeEffect && activeEffect !== "None";
 
     const errorBanner = lightFound ? "" : `
       <div class="error-banner">
@@ -624,7 +625,7 @@ class ColorSplashCard extends HTMLElement {
     let stateText;
     if (!isOn) {
       stateText = "Off";
-    } else if (activeEffect && activeEffect !== "None") {
+    } else if (hasEffect) {
       stateText = activeEffect;
     } else if (rgbColor) {
       stateText = `On — RGB ${rgbColor.join(", ")}`;
@@ -632,20 +633,36 @@ class ColorSplashCard extends HTMLElement {
       stateText = "On";
     }
 
-    // Wheel cursor position (only meaningful when isOn and we
-    // have an rgb_color attribute — the picker reflects the
-    // last colour HA sent).
+    // Lightbulb tint — fill the icon with the current displayed
+    // colour. When a show effect is running, fall back to the
+    // theme's active-icon colour because the colour is cycling.
+    let iconStyle = "";
+    if (isOn && !hasEffect && rgbColor) {
+      const rgbCss = `rgb(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]})`;
+      const rgbBg = `rgba(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]},0.22)`;
+      iconStyle = `color:${rgbCss};background:${rgbBg};`;
+    } else if (isOn && hasEffect) {
+      iconStyle = "color:var(--state-icon-active-color,#f9a825);" +
+                  "background:rgba(249,168,37,0.22);";
+    }
+
+    // Wheel cursor position. Reflects rgb_color whenever it's
+    // available and no show is running. During a show, the
+    // cursor hides because the colour is cycling and any cached
+    // rgb_color is stale.
     let cursorStyle = "";
     let cursorActive = "";
-    if (isOn && rgbColor) {
+    if (isOn && !hasEffect && rgbColor) {
       const [h, s] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
-      // h: 0=top, sweeps clockwise — invert the buildWheel mapping.
+      // h: 0° = right (red), sweeps counter-clockwise. Invert
+      // the buildWheel mapping by using cos for x and -sin for
+      // y (CSS y is flipped).
       const angleRad = h * Math.PI / 180;
       const cx = WHEEL_SIZE / 2;
       const cy = WHEEL_SIZE / 2;
       const r = s * (WHEEL_SIZE / 2);
-      const x = cx + Math.sin(angleRad) * r;
-      const y = cy - Math.cos(angleRad) * r;
+      const x = cx + Math.cos(angleRad) * r;
+      const y = cy - Math.sin(angleRad) * r;
       cursorStyle = `left:${x}px;top:${y}px;` +
                     `background:rgb(${rgbColor.join(",")});`;
       cursorActive = "active";
@@ -712,7 +729,7 @@ class ColorSplashCard extends HTMLElement {
 
         <button class="${tileClass}" data-action="toggle"
                 aria-label="${stateText}">
-          <div class="tile-icon">
+          <div class="tile-icon" style="${iconStyle}">
             <ha-icon icon="${isOn ? "mdi:lightbulb" : "mdi:lightbulb-off"}"></ha-icon>
           </div>
           <div class="tile-text">
@@ -779,12 +796,26 @@ class ColorSplashCard extends HTMLElement {
             "light", "toggle", {entity_id: cfg.light_entity});
         break;
 
-      case "solid":
-        await hass.callService("button", "press",
-            {entity_id: `button.${cfg.prefix}${t.dataset.button}`});
-        await hass.callService("light", "turn_on",
-            {entity_id: cfg.light_entity, effect: "None"});
+      case "solid": {
+        // Route through light.turn_on(rgb_color) so HA records
+        // the colour on the entity (drives the wheel cursor +
+        // tile state). The firmware's pick_color resolves the
+        // exact preset RGB to the same solid byte that
+        // button.press would have fired, thanks to the
+        // solid_preference bias.
+        const solid = SOLIDS.find((s) => s.btn === t.dataset.button);
+        if (!solid) {
+          console.warn("[colorsplash-xg-card] unknown solid", t.dataset.button);
+          break;
+        }
+        const [r, g, b] = hexToRgb(solid.hex);
+        await hass.callService("light", "turn_on", {
+          entity_id: cfg.light_entity,
+          rgb_color: [r, g, b],
+          effect: "None",
+        });
         break;
+      }
 
       case "return":
         // Bridge handles state via last_send_was_return short-circuit.
@@ -879,7 +910,10 @@ class ColorSplashCard extends HTMLElement {
       y = (y / dist) * r;
       dist = r;
     }
-    const angleRad = Math.atan2(x, -y);
+    // Match buildWheelDataUrl orientation: 0° at +x (3 o'clock),
+    // positive angles counter-clockwise. CSS y points down so
+    // negate it.
+    const angleRad = Math.atan2(-y, x);
     const h = ((angleRad * 180 / Math.PI) + 360) % 360;
     const s = Math.min(1, dist / r);
     const [R, G, B] = hsvToRgb(h, s, 1);
