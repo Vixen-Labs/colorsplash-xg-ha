@@ -86,6 +86,27 @@ SHOW_BYTES = {
     "Peruvian Paradise": 0x01,
 }
 
+# Per-show loop period (ms) detected via autocorrelation on the
+# linearized sRGB capture. The LUT only retains samples within
+# the first loop (post-skip) so a wheel-pick lands a Lock byte at
+# the earliest occurrence of the matched color rather than waiting
+# through redundant cycles.
+#
+# Tidal Wave / Patriot Dream / Desert Skies have clean minima in
+# the autocorrelation (mean Euclidean RGB distance < 15 at the
+# detected period). Nova / Super Nova jump too fast for frame-
+# level autocorrelation to lock (sub-second color steps + smooth
+# transitions); Northern Lights / Peruvian Paradise capture
+# windows didn't include a full cycle. Those shows use the
+# DEFAULT_LOOP_MS fallback — generous enough to expose most
+# colors, not so long that the user waits forever.
+SHOW_LOOP_MS = {
+    "Tidal Wave":     32000,
+    "Patriot Dream":  12200,
+    "Desert Skies":   32000,
+}
+DEFAULT_LOOP_MS = 30000
+
 
 def compute_ccm(observed_solids: dict[str, tuple[int, int, int]]
                 ) -> tuple[np.ndarray, dict[str, tuple[int, int, int]]]:
@@ -186,17 +207,25 @@ def main() -> int:
         print(f"      {name:22s}: pred={pred}  target={canon}  "
               f"max_err={err}")
 
-    # ---- Show samples (decimated, then CCM-stretched) ----
+    # ---- Show samples (decimated, clipped to first loop, then
+    # CCM-stretched) ----
     show_entries: list[tuple[int, int, int, int, int]] = []
-    show_summary: list[tuple[str, int]] = []
+    show_summary: list[tuple[str, int, int]] = []  # (name, kept, loop_ms)
     for show_name, samples in data.get("shows", {}).items():
         base = show_name.split(" #")[0]
         if base not in SHOW_BYTES:
             continue
         byte = SHOW_BYTES[base]
         decimated = decimate(samples, args.interval_ms, args.skip_ms)
-        show_summary.append((base, len(decimated)))
-        for s in decimated:
+        # Clip to the first loop iteration so the picker can never
+        # match a sample beyond t = skip_ms + loop_ms — keeps the
+        # user's max wait bounded by the loop length, not the 90 s
+        # capture window.
+        loop_ms = SHOW_LOOP_MS.get(base, DEFAULT_LOOP_MS)
+        loop_cutoff = args.skip_ms + loop_ms
+        clipped = [s for s in decimated if s["t_ms"] <= loop_cutoff]
+        show_summary.append((base, len(clipped), loop_ms))
+        for s in clipped:
             obs_rgb = (int(s["rgb"][0]), int(s["rgb"][1]),
                        int(s["rgb"][2]))
             r, g, b = apply_ccm(M, obs_rgb)
@@ -271,8 +300,9 @@ def main() -> int:
     lines.append("")
 
     lines.append(f"// Per-show samples — {len(show_entries)} entries:")
-    for name, n in show_summary:
-        lines.append(f"//   {name:22s}: {n} samples")
+    for name, n, loop_ms in show_summary:
+        lines.append(f"//   {name:22s}: {n:4d} samples  "
+                     f"(loop = {loop_ms} ms)")
     lines.append("constexpr LutSample SHOW_LUT[] = {")
     for byte, t, r, g, b in show_entries:
         lines.append(f"  {{0x{byte:02x}, {t:6d}, {r:3d}, {g:3d}, {b:3d}}},")
