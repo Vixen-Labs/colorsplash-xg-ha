@@ -8,6 +8,13 @@ in `firmware/esphome/`.
 
 - **`colorsplash-xg.yaml`** — stock-Lovelace card config (tile + grid
   + light cards). No custom resources, no HACS. Paste-to-install.
+- **`colorsplash-xg-card.js`** — custom Lovelace card (full-fill
+  colour swatches, gradient show thumbnails, "R" Return badge,
+  Lock save button). Vanilla JS, no build step. See
+  [Custom card install](#custom-card-install) below.
+- **`automations.yaml`** — example HA automations
+  (sunset-on / sunrise-off, RSSI alerts, RGB-picker calls).
+  Copy individual blocks into your `automations.yaml` or the UI.
 
 ## Install (paste-into-dashboard version)
 
@@ -89,3 +96,114 @@ affected.
 Renaming entities, reordering tiles, or swapping out `mdi:*` icons
 for something else is just YAML edits in the pasted block. No
 firmware rebuild needed.
+
+## Custom card install
+
+The custom-card version (`colorsplash-xg-card.js`) replaces the
+stock card with full-fill colour swatches, gradient show
+thumbnails, an "R" Return badge, a distinct Lock button, and a
+"Saved Presets" section that's wired up for [#53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53).
+
+### Install
+
+1. Copy `colorsplash-xg-card.js` to your HA host's
+   `/config/www/` directory (the public Lovelace asset folder —
+   create it if it doesn't exist).
+
+   ```sh
+   # via Samba / SSH:
+   cp dashboard/colorsplash-xg-card.js /config/www/
+   ```
+
+2. In Home Assistant, register the resource:
+   **Settings → Dashboards → ⋮ → Resources → Add resource**.
+   - URL: `/local/colorsplash-xg-card.js`
+   - Resource type: **JavaScript Module**
+
+3. Edit your dashboard, **+ Add Card → Manual**, paste:
+
+   ```yaml
+   type: custom:colorsplash-xg-card
+   ```
+
+   That's it — defaults match the headless firmware's entity
+   IDs. If you renamed entities, override:
+
+   ```yaml
+   type: custom:colorsplash-xg-card
+   light_entity: light.pool_light
+   lock_entity: button.pool_color_lock
+   return_entity: button.pool_color_return
+   scrub_service: esphome.colorsplash_xg_bridge_pool_scrub
+   ```
+
+4. Hard-reload the dashboard (Cmd-Shift-R / Ctrl-Shift-R) to
+   load the new JS module.
+
+### Saved Presets
+
+The custom card reserves a "Saved Presets" section between the
+Colours and Shows rows, populated from the card's `presets:`
+YAML option. Each preset is a `(start_byte, wait_ms)` recipe
+with a display name and swatch colour:
+
+```yaml
+type: custom:colorsplash-xg-card
+presets:
+  - {name: "Sunset Magenta", hex: "#dc6b9c", start_byte: 5, wait_ms: 7000}
+  - {name: "Pool Cyan",      hex: "#5fa8c4", start_byte: 4, wait_ms: 15788}
+```
+
+When tapped, the card calls the bridge's `pool_scrub` service
+(`esphome.colorsplash_xg_bridge_pool_scrub`) with the recipe
+values. The bridge sends the start byte, waits, then sends Lock.
+
+The empty-state hint and the manual-config workflow are
+placeholders until [issue #53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53)
+lands a save-from-color-wheel UI.
+
+### Custom card preview
+
+```
+┌───────────────────────────────────────┐
+│  Pool Light                  [ On  ]  │
+│                                       │
+│  COLOURS                              │
+│  [B][R][W][P][G][R̲]                   │
+│                                       │
+│  SAVED PRESETS                        │
+│   (empty — see #53)                   │
+│                                       │
+│  SHOWS                                │
+│  [Nova       ][Super Nova    ]        │
+│  [Northern L ][Tidal Wave    ]        │
+│  [Patriot D  ][Desert Skies  ]        │
+│  [Peruvian P                 ]        │
+│                                       │
+│  [🔒 Lock current colour    ]         │
+└───────────────────────────────────────┘
+```
+
+- Solid swatches are full-colour fills (not the muted accents
+  of the stock card).
+- Show tiles get `linear-gradient(...)` backgrounds derived from
+  each show's documented gradient hexes (PROTOCOL.md
+  §Show color gradients).
+- Active effect highlights with a primary-colour border.
+- All theming uses HA CSS custom properties so dark + light mode
+  both look right.
+
+### Tap behaviour
+
+| Tap | Action |
+|---|---|
+| On/Off button | `light.toggle` |
+| Solid swatch | press solid's button entity + clear active effect |
+| Return swatch | press `button.pool_color_return` + clear active effect |
+| Show tile | `light.turn_on` with that effect |
+| Lock button | press `button.pool_color_lock` |
+| Preset swatch | call `pool_scrub` with the saved recipe |
+
+Tapping a solid clears the effect attribute on the light entity
+to keep HA's view of state aligned with what the fixture is
+actually displaying.
