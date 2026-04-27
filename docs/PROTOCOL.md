@@ -462,6 +462,37 @@ is now known. The hex lists are intentionally not reproduced in full
 here to keep this document focused; they live verbatim inside
 `assets/index.android.bundle` of the app.
 
+### Empirical observations: Nova / Super Nova relationship
+
+The "same as Nova" annotation on Super Nova has been verified end-to-end via the linearized
+sRGB capture pipeline (see `docs/RGB_EXPERIMENT.md` §Calibration) and a 3-replay determinism
+test in `tools/show_colors_replay_Nova.json`:
+
+- **Nova plays a deterministic 16-color sequence**, ~1.93 s per color, ~31 s loop. Three
+  independent Nova starts produced identical color sequences with cross-run mean RGB
+  drift of just 1-2 channels (camera-noise floor) and max 7.5.
+- **Super Nova plays the same 16-color sequence at ~5.36× the rate** (median hold ~367 ms
+  vs Nova's ~1966 ms). First-16 hold colors line up segment-for-segment between the two
+  shows; palette histograms have Jaccard overlap 0.45 with identical top-10 percentages
+  (next-highest cross-show pair is 0.32).
+- **Nova's gradient is NOT a smooth blend.** Each color is held as a solid step, with a
+  brief AC-interrupt-driven blackout (~30 ms) between steps. The 10-color hex list above
+  is a stylized representation for the app's button gradient, not the actual emission
+  sequence — the real fixture script visits ~16 distinct colors per cycle (more than the
+  10 hex stops, with several reds/blues at slightly different intensities).
+
+**Implications for the picker LUT:**
+- Nova is stored in the LUT as a **discrete-step table** (one entry per color hold,
+  `t_ms` placed at the hold's midpoint so the Lock byte fires inside the steady color,
+  not during a transition).
+- Super Nova is **excluded from the LUT entirely**. The two shows visit the same colors,
+  but Nova's slower holds give the BLE Lock byte a much wider window (~2 s) to land on
+  the intended color than Super Nova's ~370 ms. The "Super Nova" effect remains
+  available through HA's effect dropdown — only the color-pick → Lock targeting path
+  excludes it.
+
+See `tools/generate_show_lut.py:DISCRETE_STEP_SHOWS` and `LUT_EXCLUDE_SHOWS`.
+
 ## Sources of evidence
 
 Each claim in this document is supported by at least one of the

@@ -101,11 +101,33 @@ SHOW_BYTES = {
 # DEFAULT_LOOP_MS fallback — generous enough to expose most
 # colors, not so long that the user waits forever.
 SHOW_LOOP_MS = {
+    "Nova":           32000,  # 16 colors × ~1.93 s — deterministic
     "Tidal Wave":     32000,
     "Patriot Dream":  12200,
     "Desert Skies":   32000,
 }
 DEFAULT_LOOP_MS = 30000
+
+# Shows whose color sequence is discrete (no blending) and whose
+# hold durations are long enough to step-detect cleanly. For these,
+# the LUT stores one entry per color hold, with t_ms placed at the
+# midpoint of the hold so the Lock byte fires when the fixture is
+# squarely on the target color (not during a transition).
+#
+# Verified deterministic via the 3-replay test in
+# show_colors_replay_Nova.json: same 16-color sequence on every
+# start, mean cross-run RGB drift only 1-2 (camera noise level).
+DISCRETE_STEP_SHOWS = {"Nova"}
+
+# Shows excluded from the LUT entirely. Super Nova is dropped
+# because it visits the SAME color set as Nova (palette Jaccard
+# 0.45, top-10 colors identical percentages, sequence first-16
+# matches segment-for-segment) but with ~5.36× faster holds. For
+# wheel-pick → Lock targeting, Nova's slower 1966 ms holds give
+# the Lock byte a much wider window to land on the intended color.
+# The "Super Nova" effect stays in HA's effect dropdown — only
+# its color samples are removed from the picker's matching pool.
+LUT_EXCLUDE_SHOWS = {"Super Nova"}
 
 
 def compute_ccm(observed_solids: dict[str, tuple[int, int, int]]
@@ -148,6 +170,53 @@ def apply_ccm(M: np.ndarray, rgb: tuple[int, int, int]
     out = M @ np.array(rgb, dtype=float)
     out = np.clip(out, 0, 255).round().astype(int)
     return (int(out[0]), int(out[1]), int(out[2]))
+
+
+def detect_color_holds(samples: list[dict], skip_ms: int,
+                       jump_threshold: float = 40.0,
+                       min_segment_frames: int = 3
+                       ) -> list[dict]:
+    """Find frames where RGB jumps by more than `jump_threshold`,
+    cluster contiguous frames into "color holds", and return one
+    entry per hold:
+
+        [{t_mid_ms, t_start_ms, t_end_ms, r, g, b}, ...]
+
+    `t_mid_ms` is the midpoint of the hold — the LUT places its
+    sample there so the Lock byte fires when the fixture is
+    squarely on the held color rather than during a transition.
+
+    Used only for shows in DISCRETE_STEP_SHOWS where the color
+    sequence is verified to be a clean step pattern (no blending).
+    """
+    sorted_s = [s for s in sorted(samples, key=lambda s: s["t_ms"])
+                if s["t_ms"] >= skip_ms]
+    if len(sorted_s) < 10:
+        return []
+    times = [s["t_ms"] for s in sorted_s]
+    rgbs = np.array([s["rgb"] for s in sorted_s], dtype=float)
+    diffs = np.linalg.norm(np.diff(rgbs, axis=0), axis=1)
+    step_idx = ([0]
+                + [i + 1 for i, d in enumerate(diffs) if d > jump_threshold]
+                + [len(rgbs)])
+    holds = []
+    for a, b in zip(step_idx[:-1], step_idx[1:]):
+        if b - a < min_segment_frames:
+            # Skip transient transition segments (controller blackout
+            # between colors registers as a brief dark micro-segment).
+            continue
+        seg_rgb = rgbs[a:b].mean(axis=0)
+        t_start = times[a]
+        t_end = times[b - 1]
+        holds.append({
+            "t_start_ms": t_start,
+            "t_end_ms":   t_end,
+            "t_mid_ms":   (t_start + t_end) // 2,
+            "r": int(round(seg_rgb[0])),
+            "g": int(round(seg_rgb[1])),
+            "b": int(round(seg_rgb[2])),
+        })
+    return holds
 
 
 def decimate(samples: list[dict], interval_ms: int,
@@ -207,30 +276,54 @@ def main() -> int:
         print(f"      {name:22s}: pred={pred}  target={canon}  "
               f"max_err={err}")
 
-    # ---- Show samples (decimated, clipped to first loop, then
-    # CCM-stretched) ----
+    # ---- Show samples ----
+    # Two extraction modes:
+    #   (a) Discrete-step shows (Nova): one entry per detected color
+    #       hold, t_ms placed at the hold's midpoint so Lock fires
+    #       cleanly inside the steady color, not during a transition.
+    #   (b) Smooth-gradient shows (Tidal Wave, Desert Skies, etc.):
+    #       100 ms decimated samples, clipped to one loop length.
+    # Shows in LUT_EXCLUDE_SHOWS are skipped entirely (the named
+    # effect still works in HA — only the picker's matching pool
+    # excludes them).
     show_entries: list[tuple[int, int, int, int, int]] = []
-    show_summary: list[tuple[str, int, int]] = []  # (name, kept, loop_ms)
+    show_summary: list[tuple[str, int, int, str]] = []
     for show_name, samples in data.get("shows", {}).items():
         base = show_name.split(" #")[0]
         if base not in SHOW_BYTES:
             continue
+        if base in LUT_EXCLUDE_SHOWS:
+            show_summary.append((base, 0, 0, "excluded"))
+            continue
         byte = SHOW_BYTES[base]
-        decimated = decimate(samples, args.interval_ms, args.skip_ms)
-        # Clip to the first loop iteration so the picker can never
-        # match a sample beyond t = skip_ms + loop_ms — keeps the
-        # user's max wait bounded by the loop length, not the 90 s
-        # capture window.
         loop_ms = SHOW_LOOP_MS.get(base, DEFAULT_LOOP_MS)
-        loop_cutoff = args.skip_ms + loop_ms
-        clipped = [s for s in decimated if s["t_ms"] <= loop_cutoff]
-        show_summary.append((base, len(clipped), loop_ms))
-        for s in clipped:
-            obs_rgb = (int(s["rgb"][0]), int(s["rgb"][1]),
-                       int(s["rgb"][2]))
-            r, g, b = apply_ccm(M, obs_rgb)
-            show_entries.append(
-                (byte, int(s["t_ms"]), r, g, b))
+
+        if base in DISCRETE_STEP_SHOWS:
+            holds = detect_color_holds(samples, args.skip_ms)
+            # Trim to one loop. The first hold may be a long
+            # post-byte blackout — don't count it in the loop budget.
+            kept_holds = [h for h in holds
+                          if h["t_mid_ms"] <= args.skip_ms + loop_ms]
+            for h in kept_holds:
+                obs_rgb = (h["r"], h["g"], h["b"])
+                r, g, b = apply_ccm(M, obs_rgb)
+                show_entries.append(
+                    (byte, int(h["t_mid_ms"]), r, g, b))
+            show_summary.append(
+                (base, len(kept_holds), loop_ms, "step"))
+        else:
+            decimated = decimate(samples, args.interval_ms,
+                                 args.skip_ms)
+            loop_cutoff = args.skip_ms + loop_ms
+            clipped = [s for s in decimated if s["t_ms"] <= loop_cutoff]
+            for s in clipped:
+                obs_rgb = (int(s["rgb"][0]), int(s["rgb"][1]),
+                           int(s["rgb"][2]))
+                r, g, b = apply_ccm(M, obs_rgb)
+                show_entries.append(
+                    (byte, int(s["t_ms"]), r, g, b))
+            show_summary.append(
+                (base, len(clipped), loop_ms, "decimated"))
 
     # ---- Solids: write the CANONICAL values, not the observed
     # camera values. Solids are by definition the fixed-RGB
@@ -300,9 +393,13 @@ def main() -> int:
     lines.append("")
 
     lines.append(f"// Per-show samples — {len(show_entries)} entries:")
-    for name, n, loop_ms in show_summary:
-        lines.append(f"//   {name:22s}: {n:4d} samples  "
-                     f"(loop = {loop_ms} ms)")
+    for name, n, loop_ms, mode in show_summary:
+        if mode == "excluded":
+            lines.append(f"//   {name:22s}: 0 samples       "
+                         f"(excluded — see LUT_EXCLUDE_SHOWS)")
+        else:
+            lines.append(f"//   {name:22s}: {n:4d} samples  "
+                         f"(loop = {loop_ms} ms, mode = {mode})")
     lines.append("constexpr LutSample SHOW_LUT[] = {")
     for byte, t, r, g, b in show_entries:
         lines.append(f"  {{0x{byte:02x}, {t:6d}, {r:3d}, {g:3d}, {b:3d}}},")

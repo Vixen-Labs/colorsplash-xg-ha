@@ -105,6 +105,104 @@ In general, distances ≤ 30 are excellent matches; 30–80 are
 acceptable; > 100 means the target is genuinely outside the
 fixture's gamut.
 
+### Calibration: HLG → linear → sRGB pipeline
+
+The original camera capture (iPhone Final Cut Camera HDR) is
+HEVC 10-bit HLG-encoded with BT.2020 primaries. cv2's default
+decode does not apply the inverse-OETF or BT.2020 → BT.709
+matrix, so the raw extracted values land in a wide-gamut
+log-encoded space — fitting a linear color-correction matrix to
+that data was producing 35–81-channel residuals on the 5-anchor
+fit. After re-extracting through `ffmpeg-full`'s `zscale` filter
+(`tin=arib-std-b67:t=linear` then `p=bt709:t=bt709:m=bt709:r=full`),
+the same fit drops residuals to 17–52 channels max:
+
+| Anchor              | Before | After |
+|---------------------|--------|-------|
+| Parisian Blue       | 81     | 21    |
+| Brazilian Red       | 35     | 17    |
+| Arctic White        | 59     | 34    |
+| Miami Pink          | 45     | 21    |
+| New Zealand Green   | 66     | 52    |
+
+The CCM is fit via least-squares observed→canonical across all
+5 documented solids, then applied to every show sample. Solid
+LUT entries are written as exact canonical literals, so a
+`#ff0000` swatch tap from the card lands as a distance-0 match.
+
+**Underwater white:** the linearized "Arctic White" anchor reads
+as (93, 184, 188) — strongly blue/green-shifted because pool
+water preferentially absorbs red wavelengths. The CCM correctly
+stretches that observation back to canonical (255, 255, 255).
+Any future fixture-color calibration must account for water's
+spectral absorption.
+
+### Show characterization: Nova / Super Nova
+
+Step-detection over the linearized sRGB capture (frame-to-frame
+RGB jump > 40 → segment boundary, contiguous frames clustered as
+"holds") cleanly recovered Nova's discrete color sequence:
+
+- **Nova**: 16-color deterministic sequence, ~1.93 s per color,
+  ~31 s loop. Three independent replay starts
+  (`tools/show_colors_replay_Nova.json`) produced byte-identical
+  sequences with cross-run mean RGB drift of 1-2 channels (camera
+  noise) and max 7.5.
+- **Super Nova**: same 16-color sequence at ~5.36× the rate
+  (~367 ms holds). Verified via:
+  - Palette Jaccard 0.45 (top cross-show pair was 0.32)
+  - Top-10 most-visited bucket percentages identical between
+    the two shows (blue 14.0%, blackout 12.5%, red 11-12%)
+  - First 16 detected color holds match segment-for-segment
+
+Frame-level autocorrelation initially failed to find the loop
+period for Nova/Super Nova because the camera's 33 ms sampling
+catches different phases of short color steps on each cycle.
+Step-detection bypasses the phase issue by matching the discrete
+sequence directly. **Decision tree for periodic-signal analysis:**
+
+| Signal characteristic | Method |
+|---|---|
+| Smooth/continuous (gradient blends) | Mean-Euclidean autocorrelation works |
+| Discrete steps with hold ≥ 2× frame interval | Step detection + sequence match |
+| Discrete with very short holds | Heavy smoothing, OR sample at higher rate |
+| "Are these two shows the same color set?" | Palette histogram + Jaccard |
+
+### LUT representation strategies
+
+Two extraction modes in `tools/generate_show_lut.py`, controlled
+by `DISCRETE_STEP_SHOWS` and `LUT_EXCLUDE_SHOWS`:
+
+- **Step-table** (Nova): one LUT entry per detected color hold,
+  with `t_ms` placed at the hold's midpoint so the Lock byte
+  fires squarely inside the steady color. ~14 entries instead
+  of ~301 decimated samples — both smaller and more accurate.
+- **Decimated** (Tidal Wave, Desert Skies, Patriot Dream,
+  Northern Lights, Peruvian Paradise): 100 ms decimated samples
+  clipped to one loop period.
+- **Excluded** (Super Nova): no LUT entries at all. Same colors
+  as Nova but shorter holds → wider Lock-timing margin on Nova
+  makes it the better target. The "Super Nova" effect remains
+  available via HA's effect dropdown.
+
+Total LUT footprint: 1379 entries / ~48 KB binary (down from
+5663 entries / ~189 KB pre-linearization-and-clipping).
+
+### Loop periods (per show)
+
+| Show | Loop | Source |
+|---|---|---|
+| Nova | 32 000 ms | step-detection: 16 colors × 1.93 s |
+| Super Nova | (excluded from LUT) | (n/a — see above) |
+| Tidal Wave | 32 000 ms | autocorrelation clean min, score 12.87 |
+| Patriot Dream | 12 200 ms | autocorrelation clean min, score 13.95 |
+| Desert Skies | 32 000 ms | autocorrelation clean min, score 11.98 |
+| Northern Lights | 30 000 ms | DEFAULT — capture window < one loop |
+| Peruvian Paradise | 30 000 ms | DEFAULT — only 41 s of capture available |
+
+Northern Lights and Peruvian Paradise pending a longer
+recapture (issue #55) to nail down their actual loop periods.
+
 ## Phase 4a method and findings
 
 The probe ran against the headless ESP32 bridge
