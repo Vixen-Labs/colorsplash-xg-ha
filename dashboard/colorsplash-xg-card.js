@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.1";
+const VERSION = "0.7.2";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -336,7 +336,7 @@ class ColorSplashCard extends HTMLElement {
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.4em;
+        --mdc-icon-size: 24px;
         color: var(--state-icon-color, #a0a0a0);
         transition: background-color 0.18s ease, color 0.18s ease;
       }
@@ -712,7 +712,9 @@ class ColorSplashCard extends HTMLElement {
 
         <button class="${tileClass}" data-action="toggle"
                 aria-label="${stateText}">
-          <div class="tile-icon">💡</div>
+          <div class="tile-icon">
+            <ha-icon icon="${isOn ? "mdi:lightbulb" : "mdi:lightbulb-off"}"></ha-icon>
+          </div>
           <div class="tile-text">
             <div class="tile-name">Pool Light</div>
             <div class="tile-state">${stateText}</div>
