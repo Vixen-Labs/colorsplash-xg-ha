@@ -23,7 +23,7 @@
  * built-in Lovelace runtime which provides hass + setConfig.
  */
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 // 5 documented solid presets (from PROTOCOL.md and the firmware's
 // SOLID_COLORS table). RGB values are the canonical bright primaries
@@ -59,7 +59,13 @@ const SHOWS = [
     name: "Super Nova",
     effect: "Super Nova",
     discrete: true,
+    // Same colour sequence as Nova but rendered twice so each
+    // slice is half-width — matches Super Nova's faster cycle
+    // visually (it switches between colours about 3× as fast as
+    // Nova in practice).
     gradient: ["#FEEA00", "#71CD2E", "#02ADF9", "#1649D5", "#DC0BB3",
+               "#FFBF1C", "#17B63F", "#00B2E1", "#205ADB", "#CB00A9",
+               "#FEEA00", "#71CD2E", "#02ADF9", "#1649D5", "#DC0BB3",
                "#FFBF1C", "#17B63F", "#00B2E1", "#205ADB", "#CB00A9"],
   },
   {
@@ -231,21 +237,46 @@ class ColorSplashCard extends HTMLElement {
         font-size: 1.1em;
         font-weight: 500;
       }
+      /* Slider-style toggle modelled on HA's standard switch:
+         pill-shaped track + circular thumb that translates on
+         change. Approximation, not the real ha-switch (shadow DOM
+         + MWC components don't pass through cleanly), but the
+         visual cue is close enough for users coming from the
+         native light card. */
       .toggle {
-        background: var(--primary-color, #03a9f4);
-        color: var(--text-primary-color, #fff);
+        position: relative;
+        width: 44px;
+        height: 24px;
+        background: var(--switch-unchecked-track-color,
+                          var(--secondary-background-color, #6b6b6b));
         border: none;
         border-radius: 999px;
-        padding: 6px 16px;
-        font-size: 0.95em;
+        padding: 0;
         cursor: pointer;
-        transition: transform 0.08s ease;
+        transition: background-color 0.18s ease;
+        outline: none;
+        font-size: 0;            /* hide any inner text we might add */
       }
-      .toggle.off {
-        background: var(--secondary-background-color, #2c2c2e);
-        color: var(--secondary-text-color, #a0a0a0);
+      .toggle::before {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--switch-unchecked-button-color, #fafafa);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        transition: left 0.18s ease, background-color 0.18s ease;
       }
-      .toggle:active { transform: scale(0.96); }
+      .toggle.on {
+        background: var(--switch-checked-track-color,
+                          var(--primary-color, #03a9f4));
+      }
+      .toggle.on::before {
+        left: 23px;
+        background: var(--switch-checked-button-color, #fff);
+      }
       .group-label {
         font-size: 0.75em;
         text-transform: uppercase;
@@ -263,28 +294,22 @@ class ColorSplashCard extends HTMLElement {
       .shows {
         grid-template-columns: repeat(2, 1fr);
       }
-      .swatch, .show-tile, .control-tile {
+      /* Every swatch and show preview is a circular colour disc.
+         A 1px outline (uses --divider-color so it shows up on
+         both light and dark themes) gives white / pale colours a
+         visible edge against light backgrounds. */
+      .swatch, .show-disc {
         position: relative;
         cursor: pointer;
-        border: 2px solid transparent;
-        overflow: hidden;
-        transition: transform 0.08s ease, border-color 0.15s ease;
-        user-select: none;
-      }
-      /* Solid + Return swatches are circular discs — round so they
-         read as colour samples, not buttons. Show tiles stay
-         rounded-rect so the names fit. */
-      .swatch {
         border-radius: 50%;
         aspect-ratio: 1 / 1;
-      }
-      .show-tile, .control-tile {
-        border-radius: 10px;
-        height: 56px;
+        outline: 1px solid var(--divider-color, rgba(127,127,127,0.4));
+        outline-offset: -1px;
+        transition: transform 0.08s ease, box-shadow 0.15s ease;
+        user-select: none;
       }
       .swatch:active,
-      .show-tile:active,
-      .control-tile:active {
+      .show-disc:active {
         transform: scale(0.95);
       }
       .swatch.return {
@@ -301,17 +326,37 @@ class ColorSplashCard extends HTMLElement {
       .swatch.preset {
         display: flex;
         align-items: flex-end;
-        padding: 4px 6px;
+        justify-content: center;
+        padding: 0;
       }
       .swatch.preset .preset-name {
-        font-size: 0.7em;
+        font-size: 0.65em;
         font-weight: 600;
         color: #fff;
         text-shadow: 0 1px 2px rgba(0,0,0,0.7);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 100%;
+        max-width: 90%;
+        padding-bottom: 6px;
+      }
+      /* Show-tile cell: circular gradient disc with the show
+         name as a caption below it. */
+      .show-tile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+      }
+      .show-tile.active .show-disc {
+        box-shadow: 0 0 0 3px var(--primary-color, #03a9f4);
+      }
+      .show-tile .name {
+        font-size: 0.78em;
+        font-weight: 500;
+        color: var(--primary-text-color, #fff);
+        text-align: center;
+        line-height: 1.1;
       }
       .empty-presets {
         font-size: 0.8em;
@@ -320,22 +365,6 @@ class ColorSplashCard extends HTMLElement {
         padding: 6px 0;
       }
       .swatch[title] { /* tooltip handled by browser */ }
-      .show-tile {
-        height: 64px;
-        display: flex;
-        align-items: flex-end;
-        padding: 6px 8px;
-      }
-      .show-tile .name {
-        font-size: 0.78em;
-        font-weight: 600;
-        color: #fff;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-      }
-      .show-tile.active {
-        border-color: var(--primary-color, #03a9f4);
-        box-shadow: 0 0 0 3px rgba(3,169,244,0.25);
-      }
       .lock-btn {
         margin-top: 12px;
         width: 100%;
@@ -377,8 +406,10 @@ class ColorSplashCard extends HTMLElement {
   _buildHTML(isOn, activeEffect) {
     const cfg = this._config;
     const lightFound = !!this._hass.states[cfg.light_entity];
-    const toggleLabel = isOn ? "On" : "Off";
-    const toggleClass = isOn ? "toggle" : "toggle off";
+    // The toggle is a slider (no inner text) but we still set an
+    // aria-label so screen readers announce its state.
+    const toggleClass = isOn ? "toggle on" : "toggle";
+    const toggleAria = isOn ? "Pool light on" : "Pool light off";
 
     // If the configured light entity isn't in HA's state map, the
     // card has nothing real to drive — show an obvious banner with
@@ -426,9 +457,12 @@ class ColorSplashCard extends HTMLElement {
         grad = `linear-gradient(135deg, ${sh.gradient.join(", ")})`;
       }
       const cls = activeEffect === sh.effect ? "show-tile active" : "show-tile";
+      // Single tap target — the wrapper div carries data-action so
+      // a click anywhere on disc OR caption fires the same handler.
       return `<div class="${cls}" data-action="show"
-                   data-effect="${sh.effect}"
-                   style="background:${grad};">
+                   data-effect="${sh.effect}">
+                <div class="show-disc"
+                     style="background:${grad};"></div>
                 <span class="name">${sh.name}</span>
               </div>`;
     }).join("");
@@ -461,7 +495,8 @@ class ColorSplashCard extends HTMLElement {
         ${errorBanner}
         <div class="header">
           <span class="title">Pool Light</span>
-          <button class="${toggleClass}" data-action="toggle">${toggleLabel}</button>
+          <button class="${toggleClass}" data-action="toggle"
+                  aria-label="${toggleAria}"></button>
         </div>
 
         <div class="group-label">Colours</div>
