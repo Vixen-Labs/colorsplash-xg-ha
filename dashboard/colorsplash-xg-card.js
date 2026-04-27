@@ -182,10 +182,11 @@ class ColorSplashCard extends HTMLElement {
     const activeEffect = lightState && lightState.attributes
         ? lightState.attributes.effect
         : null;
+    const lightFound = !!lightState;
 
     // Cheap re-render gate so re-rendering on every hass update
     // doesn't churn the DOM if nothing relevant changed.
-    const key = `${isOn}|${activeEffect || ""}`;
+    const key = `${lightFound}|${isOn}|${activeEffect || ""}`;
     if (key === this._lastRenderedKey && this.shadowRoot.firstChild) {
       return;
     }
@@ -336,19 +337,52 @@ class ColorSplashCard extends HTMLElement {
       .lock-btn::before {
         content: "🔒  ";
       }
+      /* Subtle dim when the light is off — still clearly tappable
+         (each tap also turns the light on), not a "disabled" look. */
       .off-state .swatch,
-      .off-state .show-tile,
+      .off-state .show-tile {
+        opacity: 0.85;
+      }
       .off-state .lock-btn {
-        opacity: 0.45;
+        opacity: 0.6;
+      }
+      .error-banner {
+        background: var(--error-color, #d32f2f);
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        font-size: 0.85em;
+        line-height: 1.4;
+      }
+      .error-banner code {
+        background: rgba(0,0,0,0.25);
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 0.95em;
       }
     `;
   }
 
   _buildHTML(isOn, activeEffect) {
     const cfg = this._config;
+    const lightFound = !!this._hass.states[cfg.light_entity];
     const stateClass = isOn ? "" : "off-state";
     const toggleLabel = isOn ? "On" : "Off";
     const toggleClass = isOn ? "toggle" : "toggle off";
+
+    // If the configured light entity isn't in HA's state map, the
+    // card has nothing real to drive — show an obvious banner with
+    // the configured ID + a hint to override `prefix:` rather than
+    // silently rendering a greyed-out card.
+    const errorBanner = lightFound ? "" : `
+      <div class="error-banner">
+        Entity <code>${cfg.light_entity}</code> not found in
+        Home Assistant. Either flash the bridge, or add a
+        <code>prefix:</code> override to the card's YAML config.
+        Look up the real ID in
+        Developer Tools → States (search for <code>pool_light</code>).
+      </div>`;
 
     const solidSwatches = SOLIDS.map((s) =>
       `<div class="swatch" data-action="solid"
@@ -400,6 +434,7 @@ class ColorSplashCard extends HTMLElement {
 
     return `
       <div class="card ${stateClass}">
+        ${errorBanner}
         <div class="header">
           <span class="title">Pool Light</span>
           <button class="${toggleClass}" data-action="toggle">${toggleLabel}</button>
