@@ -66,12 +66,22 @@ SHOW_EFFECTS: list[tuple[str, int]] = [
     ("Peruvian Paradise",  0x01),
 ]
 
+# Phase 4b experimental flag — when true, the light advertises
+# ColorMode::RGB in addition to ON_OFF, so HA's standard light card
+# shows a colour wheel that drives the embedded show-scrub picker
+# (see firmware/esphome/components/colorsplash_xg/show_color_lut.h).
+# Default off — issue #54 keeps the classic effects-only interface
+# as the stable default since the colour gamut is constrained and
+# can confuse users who expect arbitrary RGB to "just work".
+CONF_RGB_MODE = "rgb_mode"
+
 # LIGHT_SCHEMA (not BINARY_LIGHT_SCHEMA) — we don't want the `strobe`
 # effect or other user-added effects muddling our hardcoded presets.
 CONFIG_SCHEMA = light.LIGHT_SCHEMA.extend(
     {
         cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(ColorSplashLightOutput),
         cv.GenerateID(CONF_COLORSPLASH_XG_ID): cv.use_id(ColorSplashXG),
+        cv.Optional(CONF_RGB_MODE, default=False): cv.boolean,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -82,6 +92,7 @@ async def to_code(config):
 
     parent = await cg.get_variable(config[CONF_COLORSPLASH_XG_ID])
     cg.add(var.set_parent(parent))
+    cg.add(var.set_rgb_mode(config[CONF_RGB_MODE]))
 
     # Build the 7 show effects in codegen and pass them all to
     # LightState::add_effects in a single call. LightState's

@@ -54,7 +54,8 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
              static_cast<int>(name.size()), name.c_str());
   }
 
-  if (state->current_values.get_color_mode() == light::ColorMode::RGB) {
+  if (this->rgb_mode_ &&
+      state->current_values.get_color_mode() == light::ColorMode::RGB) {
     const auto &v = state->current_values;
     uint8_t r = (uint8_t) std::round(v.get_red() * 255.0f);
     uint8_t g = (uint8_t) std::round(v.get_green() * 255.0f);

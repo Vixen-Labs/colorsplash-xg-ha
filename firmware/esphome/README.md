@@ -125,6 +125,35 @@ dns-sd -G v4 colorsplash-xg-bridge.local      # (or colorsplash-xg.local for dis
 nc -zv <ip> 6053                              # HA API port open
 ```
 
+## Headless config option: experimental RGB color picker
+
+`light.pool_light` defaults to **classic** mode (on/off +
+12 named effects, no color wheel). Phase 4b shipped an
+experimental color-wheel that drives the fixture via an
+embedded show-scrub LUT — opt in by adding `rgb_mode: true`
+to the light's YAML config:
+
+```yaml
+light:
+  - platform: colorsplash_xg
+    # … other options …
+    rgb_mode: true   # advertises ColorMode::RGB to HA
+    # rgb_mode: false  # default — classic effects-only
+```
+
+After changing `rgb_mode`, you must re-flash the bridge AND
+reload the ESPHome integration in HA (Settings → Devices &
+Services → ESPHome → 3-dot menu → Reload). HA caches the
+device's color-mode capability at integration setup; just
+re-flashing isn't enough.
+
+Why it's experimental: the fixture's reachable colour gamut is
+constrained, so target RGBs land approximately rather than
+exactly (issue #54 has full context). The future preset-card
+work (issue #53) will give users a way to save & tweak specific
+known-good colors as named presets, sidestepping the gamut
+imprecision.
+
 ## Subsequent updates (OTA)
 
 Once the device is on Wi-Fi, `esphome run` auto-discovers it and

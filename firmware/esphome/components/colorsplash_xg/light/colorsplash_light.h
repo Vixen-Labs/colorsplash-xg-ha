@@ -44,24 +44,32 @@ class ColorSplashLightOutput : public light::LightOutput {
  public:
   light::LightTraits get_traits() override {
     light::LightTraits traits;
-    // ON_OFF for the simple toggle / effect path; RGB so HA's
-    // standard light card exposes a colour wheel that drives the
-    // bridge's embedded show-scrub picker (Phase 4b). The fixture
-    // doesn't support brightness, so we don't advertise it — HA
-    // will just hide the brightness slider.
-    traits.set_supported_color_modes({
-        light::ColorMode::ON_OFF,
-        light::ColorMode::RGB,
-    });
+    // ON_OFF for the simple toggle / effect path. RGB is opt-in
+    // (rgb_mode: true on the light: YAML config) — when enabled,
+    // HA's standard light card exposes a colour wheel that drives
+    // the bridge's embedded show-scrub picker (Phase 4b). Default
+    // off because the colour gamut is constrained and the picker
+    // is approximate (see issue #54). The fixture has no
+    // brightness control, so we never advertise it.
+    if (this->rgb_mode_) {
+      traits.set_supported_color_modes({
+          light::ColorMode::ON_OFF,
+          light::ColorMode::RGB,
+      });
+    } else {
+      traits.set_supported_color_modes({light::ColorMode::ON_OFF});
+    }
     return traits;
   }
 
   void write_state(light::LightState *state) override;
 
   void set_parent(ColorSplashXG *parent) { this->parent_ = parent; }
+  void set_rgb_mode(bool rgb_mode) { this->rgb_mode_ = rgb_mode; }
 
  protected:
   ColorSplashXG *parent_{nullptr};
+  bool rgb_mode_{false};
 };
 
 }  // namespace colorsplash_xg
