@@ -209,13 +209,17 @@ async def send_via_bridge(host: str, port: int, noise_psk: str,
                 print("error: bridge does not expose 'pool_scrub'.",
                       file=sys.stderr)
                 return
+            wait_ms = max(0, match["wait_ms"] - match.get("lock_comp_ms", 0))
             await api.execute_service(svc, {
                 "start_byte": match["start_byte"],
-                "wait_ms": match["wait_ms"],
+                "wait_ms": wait_ms,
             })
+            comp_note = (f" (compensated -{match['lock_comp_ms']}ms "
+                         f"from {match['wait_ms']})"
+                         if match.get('lock_comp_ms') else "")
             print(f">>> sent pool_scrub(start_byte=0x"
                   f"{match['start_byte']:02x}, "
-                  f"wait_ms={match['wait_ms']}) — "
+                  f"wait_ms={wait_ms}){comp_note} — "
                   f"'{match['name']}'.")
     finally:
         await api.disconnect()
@@ -248,6 +252,19 @@ def main() -> int:
                         "— means a solid wins unless a show sample "
                         "is more than 30 RGB-distance closer. Set "
                         "to 0 to disable the bias.")
+    p.add_argument("--lock-comp-ms", type=int, default=700,
+                   help="subtract this many ms from wait_ms before "
+                        "sending pool_scrub. Compensates for the "
+                        "lead-time between the Lock byte being "
+                        "issued and the fixture actually freezing — "
+                        "BLE write + BGScript dispatch + fixture-"
+                        "side Lock settling. Default 700 was tuned "
+                        "empirically against Tidal Wave on this "
+                        "install (without it, the locked colour "
+                        "landed visibly downstream of the target). "
+                        "May need re-tuning for a different fixture "
+                        "or installation. Solids ignore this — they "
+                        "have no Lock.")
     p.add_argument("--send", action="store_true",
                    help="after picking the top match, call the "
                         "bridge's pool_scrub service to drive the "
@@ -282,6 +299,7 @@ def main() -> int:
 
     if args.send:
         best = matches[0]
+        best["lock_comp_ms"] = args.lock_comp_ms
         print()
         noise_psk = os.environ.get("COLORSPLASH_API_KEY") or args.api_key
         if not noise_psk:
