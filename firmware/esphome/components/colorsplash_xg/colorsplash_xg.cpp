@@ -375,6 +375,16 @@ void ColorSplashXG::send_effect_byte(uint8_t byte_value) {
   if (byte_value >= 0x01 && byte_value <= 0x0c) {
     this->last_preset_byte_ = byte_value;
   }
+  // Track whether the most recent display-changing byte was Return.
+  // Used by the light entity's write_state to skip the
+  // last_preset replay after a Return — see the colorsplash_light
+  // implementation. Lock (0x0d) preserves the flag because Lock
+  // doesn't change what's currently displayed.
+  if (byte_value == 0x0e) {
+    this->last_send_was_return_ = true;
+  } else if (byte_value != 0x0d) {
+    this->last_send_was_return_ = false;
+  }
   this->try_drain_pending_();
 }
 

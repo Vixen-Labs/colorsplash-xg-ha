@@ -106,6 +106,18 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // correspond to a steady displayed color.
   optional<uint8_t> last_preset_byte() const { return this->last_preset_byte_; }
 
+  // True if the most recent display-changing byte was Return
+  // (0x0e). Lock (0x0d) preserves the flag because it doesn't
+  // change displayed colour. Used by the light entity's
+  // write_state to short-circuit the "fall through to last_preset"
+  // path after a Return — without this, an HA-side
+  // light.turn_on(effect:None) called for state-mirroring purposes
+  // would re-fire the prior preset and stomp the locked colour the
+  // fixture is now showing.
+  bool was_last_send_return() const {
+    return this->last_send_was_return_;
+  }
+
   // Watchdog / diagnostic surface for the HA binary_sensor +
   // text_sensor wired in YAML. `connected()` is inherited from
   // BLEClientBase (true once ESTABLISHED). `last_error()` returns
@@ -173,6 +185,7 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   optional<uint8_t> last_queued_byte_;
   uint32_t last_queued_at_ms_{0};
   optional<uint8_t> last_preset_byte_;
+  bool last_send_was_return_{false};
   std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 
   // Watchdog state — see PROTOCOL.md §Auto-reconnect (#12) for the

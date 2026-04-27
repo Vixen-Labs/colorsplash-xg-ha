@@ -66,6 +66,23 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     return;
   }
 
+  // Post-Return short-circuit: the fixture is currently showing
+  // the colour that was Locked previously, and the user just
+  // tapped Return to recall it. A bare HA-side turn_on (e.g. from
+  // the JS card calling light.turn_on(effect:None) right after
+  // pressing the Return button so HA's light entity flips to
+  // "on") would otherwise fall through below and re-fire
+  // last_preset, stomping the locked colour. Skip the resend in
+  // that window. The flag clears the next time send_effect_byte
+  // is called with any display-changing byte (a solid, show, or
+  // Standby).
+  if (this->parent_->was_last_send_return()) {
+    ESP_LOGD(TAG,
+             "post-Return turn_on: skipping last_preset replay "
+             "to preserve the locked colour");
+    return;
+  }
+
   const auto last_preset = this->parent_->last_preset_byte();
   uint8_t byte_to_send = last_preset.value_or(0x0b);  // Arctic White
   this->parent_->send_effect_byte(byte_to_send);
