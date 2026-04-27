@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.3";
+const VERSION = "0.7.4";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -633,26 +633,23 @@ class ColorSplashCard extends HTMLElement {
       stateText = "On";
     }
 
-    // Lightbulb tint — fill the icon with the current displayed
-    // colour. When a show effect is running, fall back to the
-    // theme's active-icon colour because the colour is cycling.
+    // Lightbulb tint — fill the icon with the last selected
+    // colour. Retained even while a show is running because
+    // dismissing the effect (effect: None) returns the fixture
+    // to that colour, so it represents the "underlying" state.
     let iconStyle = "";
-    if (isOn && !hasEffect && rgbColor) {
+    if (isOn && rgbColor) {
       const rgbCss = `rgb(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]})`;
       const rgbBg = `rgba(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]},0.22)`;
       iconStyle = `color:${rgbCss};background:${rgbBg};`;
-    } else if (isOn && hasEffect) {
-      iconStyle = "color:var(--state-icon-active-color,#f9a825);" +
-                  "background:rgba(249,168,37,0.22);";
     }
 
-    // Wheel cursor position. Reflects rgb_color whenever it's
-    // available and no show is running. During a show, the
-    // cursor hides because the colour is cycling and any cached
-    // rgb_color is stale.
+    // Wheel cursor position. Stays pinned to the last rgb_color
+    // even during a show, because that's where the fixture
+    // returns when the effect is cleared.
     let cursorStyle = "";
     let cursorActive = "";
-    if (isOn && !hasEffect && rgbColor) {
+    if (isOn && rgbColor) {
       const [h, s] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
       // h: 0° = right (red), sweeps counter-clockwise. Invert
       // the buildWheel mapping by using cos for x and -sin for
