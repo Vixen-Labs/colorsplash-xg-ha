@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -97,9 +97,15 @@ const DEFAULTS = {
   presets: [],
 };
 
-const WHEEL_SIZE = 220;     // px — outer diameter of the HSV wheel
-const WHEEL_THROTTLE = 90;  // ms between rgb_color writes during drag
+const WHEEL_SIZE = 220;       // px — outer diameter of the HSV wheel
+const SLIDER_WIDTH = 60;      // px — vertical brightness slider width
 const BRIGHTNESS_MIN = 0.05;  // floor — V=0 would just be black for any hue
+// Debounce window — after the last pointer interaction on the
+// wheel or slider, wait this long before sending the resolved
+// rgb_color to the fixture. Lets the user adjust both controls
+// to settle on the intended hue + brightness before the LUT
+// match fires.
+const SEND_DEBOUNCE = 600;    // ms
 
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -230,11 +236,18 @@ class ColorSplashCard extends HTMLElement {
     this._effectsOpen = false;
     this._wheelDragging = false;
     this._brightnessDragging = false;
-    this._lastWheelEmit = 0;
     this._wheelCursor = null;  // {hue, sat} or null
     // Last (h, s) the user picked from the wheel — kept so a
     // brightness drag re-emits the same hue with the new V.
     this._lastHs = null;
+    // Last V the user picked from the slider — kept so a wheel
+    // drag emits the same V (without bouncing back to whatever
+    // HA last reported).
+    this._lastV = null;
+    // Debounced send: rgb tuple to commit after SEND_DEBOUNCE
+    // ms of inactivity on either control. Cleared once sent.
+    this._pendingRgb = null;
+    this._pendingTimer = null;
 
     if (!WHEEL_IMAGE_CACHE) {
       WHEEL_IMAGE_CACHE = buildWheelDataUrl(WHEEL_SIZE);
@@ -475,12 +488,15 @@ class ColorSplashCard extends HTMLElement {
       }
 
       /* ─── Brightness slider ────────────────────────────────
-         Vertical pill matching the wheel's height. Black-to-
-         white gradient; thumb position reflects HSV V derived
-         from the active rgb_color. */
+         Modeled on HA's ha-state-control-light-brightness which
+         wraps ha-control-slider in vertical/end mode. Track is
+         tinted with the currently-selected hue (bright at top,
+         dim at bottom); the white handle is a thin horizontal
+         bar at the thumb position. A percentage tooltip appears
+         centered on the slider while the user drags. */
       .brightness-wrap {
         position: relative;
-        width: 30px;
+        width: ${SLIDER_WIDTH}px;
         height: ${WHEEL_SIZE}px;
         flex: 0 0 auto;
         touch-action: none;
@@ -491,23 +507,46 @@ class ColorSplashCard extends HTMLElement {
       .brightness-track {
         position: absolute;
         inset: 0;
-        border-radius: 999px;
-        background: linear-gradient(to bottom, #ffffff, #000000);
-        border: 1px solid var(--divider-color, rgba(127,127,127,0.4));
+        border-radius: 16px;
+        border: 1px solid var(--divider-color, rgba(127,127,127,0.3));
         box-sizing: border-box;
+        overflow: hidden;
+        /* Default = white at top, dark grey at bottom. JS sets
+           --cs-bright + --cs-dim per the active hue. */
+        background: linear-gradient(
+          to bottom,
+          var(--cs-bright, #ffffff) 0%,
+          var(--cs-dim, #1c1c1e) 100%);
       }
-      .brightness-thumb {
+      .brightness-handle {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.85);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        top: 0;
+        transform: translateY(-50%);
+        pointer-events: none;
+      }
+      .brightness-percent {
         position: absolute;
         left: 50%;
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        background: #ffffff;
-        border: 2px solid var(--divider-color,
-                              rgba(127,127,127,0.5));
-        box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+        top: 50%;
         transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.7);
+        color: #fff;
+        padding: 4px 10px;
+        border-radius: 8px;
+        font-size: 0.8em;
+        font-weight: 600;
         pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+      }
+      .brightness-percent.active {
+        opacity: 1;
       }
 
       /* ─── Swatch grid ─────────────────────────────────────
@@ -767,6 +806,20 @@ class ColorSplashCard extends HTMLElement {
     }
     const brightnessThumbTop =
         ((1 - brightnessVal) * WHEEL_SIZE).toFixed(1);
+    const brightnessPct = Math.round(brightnessVal * 100);
+
+    // Slider track tint: bright (V=1) at top, dim (V=BRIGHTNESS_MIN)
+    // at bottom, both at the current hue+sat. Falls back to a
+    // neutral white→dark when no hue is locked in yet.
+    let trackTintStyle = "";
+    if (rgbColor) {
+      const [hh, ss] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
+      const [br, bg, bb] = hsvToRgb(hh, ss, 1);
+      const [dr, dg, db] = hsvToRgb(hh, ss, BRIGHTNESS_MIN);
+      trackTintStyle =
+          `--cs-bright:rgb(${br},${bg},${bb});` +
+          `--cs-dim:rgb(${dr},${dg},${db});`;
+    }
 
     // Solid swatches — circular discs with HA-style border
     // handling for light colors.
@@ -864,9 +917,13 @@ class ColorSplashCard extends HTMLElement {
           </div>
           <div class="brightness-wrap" data-brightness
                aria-label="Brightness">
-            <div class="brightness-track"></div>
-            <div class="brightness-thumb"
+            <div class="brightness-track"
+                 style="${trackTintStyle}"></div>
+            <div class="brightness-handle"
                  style="top:${brightnessThumbTop}px;"></div>
+            <div class="brightness-percent">
+              ${brightnessPct}%
+            </div>
           </div>
         </div>
 
@@ -911,6 +968,10 @@ class ColorSplashCard extends HTMLElement {
     console.info(
         `[colorsplash-xg-card v${VERSION}] click action=${action}`,
         {dataset: {...t.dataset}, light_entity: cfg.light_entity});
+
+    // Any discrete action invalidates an in-flight debounced
+    // wheel/slider commit.
+    if (action !== "toggle-effects") this._cancelPendingSend();
 
     switch (action) {
       case "toggle":
@@ -1005,10 +1066,11 @@ class ColorSplashCard extends HTMLElement {
     }
   }
 
-  // Returns the current V (0..1) implied by the slider thumb on
-  // the most recent render. Falls back to 1 if no rgb_color is
-  // set yet.
+  // Returns the current V (0..1) for any new outgoing color.
+  // Priority: most recent slider drag this session → state's
+  // rgb_color → 1.
   _currentBrightness() {
+    if (this._lastV != null) return this._lastV;
     const lightState = this._hass &&
         this._hass.states[this._config.light_entity];
     const rgb = lightState && lightState.attributes &&
@@ -1017,6 +1079,39 @@ class ColorSplashCard extends HTMLElement {
     if (!rgb) return 1;
     const [, , v] = rgbToHsv(rgb[0], rgb[1], rgb[2]);
     return v;
+  }
+
+  // Schedule a debounced light.turn_on(rgb_color) call. Each
+  // wheel/slider interaction restarts the timer so the user
+  // can dial in both controls before the LUT match fires.
+  _scheduleSend(rgb) {
+    this._pendingRgb = rgb;
+    if (this._pendingTimer) clearTimeout(this._pendingTimer);
+    this._pendingTimer = setTimeout(() => {
+      this._pendingTimer = null;
+      const rgbToSend = this._pendingRgb;
+      this._pendingRgb = null;
+      // After commit, drop the cached H/S/V so subsequent
+      // interactions read fresh values from the new state.
+      this._lastHs = null;
+      this._lastV = null;
+      if (!rgbToSend || !this._hass) return;
+      this._hass.callService("light", "turn_on", {
+        entity_id: this._config.light_entity,
+        rgb_color: rgbToSend,
+      });
+    }, SEND_DEBOUNCE);
+  }
+
+  // Discrete actions (solid / show / Return / toggle / lock /
+  // preset) bypass the debounce and need to cancel any pending
+  // wheel/slider commit so it doesn't stomp the new state.
+  _cancelPendingSend() {
+    if (this._pendingTimer) clearTimeout(this._pendingTimer);
+    this._pendingTimer = null;
+    this._pendingRgb = null;
+    this._lastHs = null;
+    this._lastV = null;
   }
 
   _onWheelDown(e) {
@@ -1067,9 +1162,10 @@ class ColorSplashCard extends HTMLElement {
     // dimmed per the slider.
     const v = Math.max(BRIGHTNESS_MIN, this._currentBrightness());
     const [R, G, B] = hsvToRgb(h, s, v);
-    // Cursor dot uses V=1 colors so it remains visible against
-    // the wheel even when the user has dimmed the fixture.
+    // Cursor dot + slider track tint use V=1 colors so the
+    // chroma stays visible regardless of the slider position.
     const [rW, gW, bW] = hsvToRgb(h, s, 1);
+    const [rD, gD, bD] = hsvToRgb(h, s, BRIGHTNESS_MIN);
 
     // Live-update the cursor dot without a full re-render.
     const cursor = this.shadowRoot.querySelector(".wheel-cursor");
@@ -1079,24 +1175,22 @@ class ColorSplashCard extends HTMLElement {
       cursor.style.top = `${y + r}px`;
       cursor.style.background = `rgb(${rW},${gW},${bW})`;
     }
+    // Live-update the slider track tint to follow the new hue.
+    const track = this.shadowRoot.querySelector(".brightness-track");
+    if (track) {
+      track.style.setProperty("--cs-bright", `rgb(${rW},${gW},${bW})`);
+      track.style.setProperty("--cs-dim", `rgb(${rD},${gD},${bD})`);
+    }
 
-    const now = Date.now();
-    if (!force && now - this._lastWheelEmit < WHEEL_THROTTLE) return;
-    this._lastWheelEmit = now;
-
-    const cfg = this._config;
-    const hass = this._hass;
-    if (!hass) return;
-    hass.callService("light", "turn_on", {
-      entity_id: cfg.light_entity,
-      rgb_color: [R, G, B],
-    });
+    this._scheduleSend([R, G, B]);
   }
 
   _onBrightDown(e) {
     e.preventDefault();
     this._brightnessDragging = true;
     e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+    const pct = this.shadowRoot.querySelector(".brightness-percent");
+    if (pct) pct.classList.add("active");
     this._emitBrightness(e, true);
   }
 
@@ -1109,6 +1203,8 @@ class ColorSplashCard extends HTMLElement {
   _onBrightUp(e) {
     if (!this._brightnessDragging) return;
     this._brightnessDragging = false;
+    const pct = this.shadowRoot.querySelector(".brightness-percent");
+    if (pct) pct.classList.remove("active");
     this._emitBrightness(e, true);
   }
 
@@ -1119,20 +1215,18 @@ class ColorSplashCard extends HTMLElement {
     const yClamped = Math.max(0,
         Math.min(rect.height, e.clientY - rect.top));
     const v = Math.max(BRIGHTNESS_MIN, 1 - (yClamped / rect.height));
+    this._lastV = v;
 
-    // Live-update the thumb without a full re-render.
-    const thumb = this.shadowRoot.querySelector(".brightness-thumb");
-    if (thumb) {
-      thumb.style.top = `${yClamped}px`;
+    // Live-update the handle bar without a full re-render.
+    const handle = this.shadowRoot.querySelector(".brightness-handle");
+    if (handle) {
+      handle.style.top = `${yClamped}px`;
     }
-
-    const now = Date.now();
-    if (!force && now - this._lastWheelEmit < WHEEL_THROTTLE) return;
-    this._lastWheelEmit = now;
-
-    const cfg = this._config;
-    const hass = this._hass;
-    if (!hass) return;
+    // Live-update the percentage tooltip text.
+    const pct = this.shadowRoot.querySelector(".brightness-percent");
+    if (pct) {
+      pct.textContent = `${Math.round(v * 100)}%`;
+    }
 
     // Reuse the most recent hue/sat from the wheel; if the user
     // hasn't picked one this session, derive from rgb_color.
@@ -1140,17 +1234,15 @@ class ColorSplashCard extends HTMLElement {
     if (this._lastHs) {
       [h, s] = this._lastHs;
     } else {
-      const lightState = hass.states[cfg.light_entity];
+      const hass = this._hass;
+      const lightState = hass && hass.states[this._config.light_entity];
       const rgb = lightState && lightState.attributes &&
           Array.isArray(lightState.attributes.rgb_color)
               ? lightState.attributes.rgb_color : [255, 255, 255];
       [h, s] = rgbToHsv(rgb[0], rgb[1], rgb[2]);
     }
     const [R, G, B] = hsvToRgb(h, s, v);
-    hass.callService("light", "turn_on", {
-      entity_id: cfg.light_entity,
-      rgb_color: [R, G, B],
-    });
+    this._scheduleSend([R, G, B]);
   }
 }
 
