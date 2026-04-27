@@ -163,6 +163,21 @@ thumbnails, an "R" Return badge, a distinct Lock button, and a
 4. Hard-reload the dashboard (Cmd-Shift-R / Ctrl-Shift-R) to
    load the new JS module.
 
+### Updating the card
+
+HA caches Lovelace JS resources aggressively — a hard browser
+reload often isn't enough after pulling a new version. The
+reliable pattern: append `?v=<version>` to the resource URL
+matching the `VERSION` constant at the top of the JS file. So
+when v0.5.0 ships, set the resource URL to
+`/local/colorsplash-xg-card.js?v=0.5.0`. Each version bump in
+the JS gets a matching URL bump in
+**Settings → Dashboards → Resources**.
+
+The `VERSION` constant is logged to the browser console on every
+card mount, so you can verify what's actually loaded:
+`colorsplash-xg-card v0.5.0`.
+
 ### Saved Presets
 
 The custom card reserves a "Saved Presets" section between the
