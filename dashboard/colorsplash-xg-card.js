@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.8.2";
+const VERSION = "0.9.0";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -93,9 +93,17 @@ const DEFAULTS = {
   light_entity: null,
   lock_entity: null,
   return_entity: null,
+  recipe_entity: null,         // text_sensor with "0xNN,wait_ms"
   scrub_service: "esphome.colorsplash_xg_bridge_pool_scrub",
   presets: [],
 };
+
+// localStorage key for user-saved presets. Stored as a JSON array
+// of {name, hex, start_byte, wait_ms}. YAML-defined presets and
+// localStorage presets are merged in the picker — YAML is
+// version-controlled / shareable, localStorage is per-browser
+// persistence for ad-hoc captures.
+const PRESET_STORAGE_KEY = "colorsplash-xg-card.presets";
 
 const WHEEL_SIZE = 220;       // px — outer diameter of the HSV wheel
 const SLIDER_WIDTH = 100;     // px — vertical slider thickness
@@ -286,7 +294,64 @@ class ColorSplashCard extends HTMLElement {
         || `button.${prefix}pool_color_lock`;
     merged.return_entity = merged.return_entity
         || `button.${prefix}pool_color_return`;
+    merged.recipe_entity = merged.recipe_entity
+        || `sensor.${prefix}pool_last_picked_recipe`;
     this._config = merged;
+    this._userPresets = this._loadUserPresets();
+  }
+
+  _loadUserPresets() {
+    try {
+      const raw = window.localStorage.getItem(PRESET_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.warn("[colorsplash-xg-card] failed to load user presets", e);
+      return [];
+    }
+  }
+
+  _saveUserPresets() {
+    try {
+      window.localStorage.setItem(
+          PRESET_STORAGE_KEY,
+          JSON.stringify(this._userPresets || []));
+    } catch (e) {
+      console.warn("[colorsplash-xg-card] failed to save user presets", e);
+    }
+  }
+
+  // Read the current pick recipe from the bridge's exposed
+  // text_sensor (format: "0xNN,wait_ms_decimal"). Returns
+  // {start_byte, wait_ms} or null if no pick has happened yet.
+  _readCurrentRecipe() {
+    const cfg = this._config;
+    const hass = this._hass;
+    if (!hass) return null;
+    const st = hass.states[cfg.recipe_entity];
+    if (!st || !st.state || st.state === "unknown" ||
+        st.state === "unavailable") {
+      return null;
+    }
+    const m = String(st.state).match(/^0x([0-9a-f]{1,2}),(\d+)$/i);
+    if (!m) return null;
+    return {
+      start_byte: parseInt(m[1], 16),
+      wait_ms:    parseInt(m[2], 10),
+    };
+  }
+
+  // Returns the merged YAML + localStorage preset list for
+  // rendering. localStorage presets carry a `_user: true` flag so
+  // delete-affordance shows only on those.
+  _allPresets() {
+    const cfg = this._config;
+    const yaml = (Array.isArray(cfg.presets) ? cfg.presets : [])
+        .map((p) => ({...p, _user: false}));
+    const user = (this._userPresets || [])
+        .map((p) => ({...p, _user: true}));
+    return [...yaml, ...user];
   }
 
   set hass(hass) {
@@ -315,6 +380,8 @@ class ColorSplashCard extends HTMLElement {
       rgbColor ? rgbColor.join(",") : "",
       this._effectsOpen,
       JSON.stringify(cfg.presets || []),
+      JSON.stringify(this._userPresets || []),
+      this._readCurrentRecipe() ? "have-recipe" : "no-recipe",
     ].join("|");
     if (key === this._lastRenderedKey && this.shadowRoot.firstChild) {
       return;
@@ -735,6 +802,40 @@ class ColorSplashCard extends HTMLElement {
         box-shadow: 0 0 0 2px var(--primary-color, #03a9f4);
       }
 
+      /* ─── Save preset button ──────────────────────────────
+         Shown only when the bridge has reported a fresh pick
+         recipe and the light is on with an rgb_color. */
+      .save-preset-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+        background: transparent;
+        color: var(--primary-text-color, #fff);
+        border: 1px dashed var(--divider-color, rgba(127,127,127,0.5));
+        border-radius: 10px;
+        padding: 8px;
+        margin-bottom: 12px;
+        font-size: 0.9em;
+        cursor: pointer;
+        --mdc-icon-size: 18px;
+        transition: background-color 0.15s ease;
+      }
+      .save-preset-btn:hover {
+        background: var(--secondary-background-color, #2c2c2e);
+      }
+      .save-preset-btn:active {
+        transform: scale(0.99);
+      }
+      /* User-saved preset swatches get a subtle dotted ring so
+         they're distinguishable from YAML-defined ones. */
+      .swatch.preset.user {
+        box-shadow: 0 0 0 1px var(--divider-color,
+                                  rgba(127,127,127,0.45)),
+                    0 0 0 3px transparent;
+      }
+
       /* ─── Lock button ───────────────────────────────────── */
       .lock-btn {
         margin-top: 8px;
@@ -888,18 +989,36 @@ class ColorSplashCard extends HTMLElement {
         <ha-icon icon="mdi:lock-reset"></ha-icon>
       </button>`;
 
-    // User presets — each has {name, hex, start_byte, wait_ms}.
-    const presets = Array.isArray(cfg.presets) ? cfg.presets : [];
+    // YAML + localStorage presets, merged. _user=true marks
+    // localStorage entries (gain a delete affordance).
+    const presets = this._allPresets();
     const presetSwatches = presets.map((p, i) => {
       const isLight = luminosity(p.hex || "#444") > 0.8;
-      const tip = `${p.name || ""} — start_byte=0x${(p.start_byte || 0).toString(16)} wait_ms=${p.wait_ms || 0}`;
-      return `<button class="swatch preset ${isLight ? "light" : ""}"
+      const tip = `${p.name || ""} — `
+                + `start_byte=0x${(p.start_byte || 0).toString(16)} `
+                + `wait_ms=${p.wait_ms || 0}`
+                + (p._user ? " (user, long-press to delete)" : "");
+      const userClass = p._user ? " user" : "";
+      return `<button class="swatch preset${userClass} `
+            + `${isLight ? "light" : ""}"
                       data-action="preset"
                       data-preset-index="${i}"
                       title="${tip}"
                       aria-label="Preset ${p.name || i}"
                       style="background:${p.hex || "#444"};"></button>`;
     }).join("");
+
+    // "Save current as preset" button — visible when the light
+    // is on, the bridge has reported a recipe (i.e., the user
+    // recently picked a color from the wheel), and we have an
+    // rgb_color to swatch-color it.
+    const haveRecipe = !!this._readCurrentRecipe();
+    const canSave = isOn && haveRecipe && rgbColor && !hasEffect;
+    const saveBtn = canSave ? `
+      <button class="save-preset-btn" data-action="save-preset">
+        <ha-icon icon="mdi:bookmark-plus-outline"></ha-icon>
+        <span>Save current color as preset…</span>
+      </button>` : "";
 
     // Effect dropdown — collapsible; entries show a circular
     // show swatch (gradient or discrete-slice) instead of a
@@ -978,6 +1097,7 @@ class ColorSplashCard extends HTMLElement {
           ${returnSwatch}
           ${presetSwatches}
         </div>
+        ${saveBtn}
 
         <div class="effect-section">
           <button class="${triggerClass}"
@@ -1015,9 +1135,13 @@ class ColorSplashCard extends HTMLElement {
         `[colorsplash-xg-card v${VERSION}] click action=${action}`,
         {dataset: {...t.dataset}, light_entity: cfg.light_entity});
 
-    // Any discrete action invalidates an in-flight debounced
-    // wheel/slider commit.
-    if (action !== "toggle-effects") this._cancelPendingSend();
+    // Any discrete action that changes fixture state invalidates
+    // an in-flight debounced wheel/slider commit. save-preset
+    // doesn't change state — let the pending commit fire normally
+    // so the saved recipe reflects what the user just dragged to.
+    if (action !== "toggle-effects" && action !== "save-preset") {
+      this._cancelPendingSend();
+    }
 
     switch (action) {
       case "toggle":
@@ -1076,7 +1200,7 @@ class ColorSplashCard extends HTMLElement {
 
       case "preset": {
         const idx = parseInt(t.dataset.presetIndex, 10);
-        const p = (cfg.presets || [])[idx];
+        const p = this._allPresets()[idx];
         if (!p) {
           console.warn("preset index out of range", idx);
           break;
@@ -1088,6 +1212,38 @@ class ColorSplashCard extends HTMLElement {
         });
         await hass.callService("light", "turn_on",
             {entity_id: cfg.light_entity, effect: "None"});
+        break;
+      }
+
+      case "save-preset": {
+        const recipe = this._readCurrentRecipe();
+        if (!recipe) {
+          console.warn("no recipe available — has the user picked a color?");
+          break;
+        }
+        const lightState = hass.states[cfg.light_entity];
+        const rgb = lightState && lightState.attributes &&
+            lightState.attributes.rgb_color;
+        if (!Array.isArray(rgb)) {
+          console.warn("no rgb_color on light entity");
+          break;
+        }
+        const hex = "#" + rgb.map((c) =>
+            c.toString(16).padStart(2, "0")).join("");
+        // Use window.prompt for v0.9.0 — minimal but functional.
+        // A nicer modal can come later.
+        const name = window.prompt(
+            "Name this preset:",
+            `My Color ${(this._userPresets || []).length + 1}`);
+        if (!name) break;
+        this._userPresets = [
+          ...(this._userPresets || []),
+          {name, hex, start_byte: recipe.start_byte,
+           wait_ms: recipe.wait_ms},
+        ];
+        this._saveUserPresets();
+        this._lastRenderedKey = "";
+        this._render();
         break;
       }
     }
@@ -1110,6 +1266,60 @@ class ColorSplashCard extends HTMLElement {
       bright.addEventListener("pointerup",   (e) => this._onBrightUp(e));
       bright.addEventListener("pointercancel", (e) => this._onBrightUp(e));
     }
+
+    // Long-press on a user preset swatch → confirm + delete.
+    // Don't intercept short clicks — those still fall through to
+    // the normal preset handler.
+    const userSwatches = this.shadowRoot.querySelectorAll(
+        ".swatch.preset.user");
+    userSwatches.forEach((sw) => {
+      let pressTimer = null;
+      let longPressed = false;
+      sw.addEventListener("pointerdown", (e) => {
+        longPressed = false;
+        pressTimer = setTimeout(() => {
+          longPressed = true;
+          this._maybeDeletePreset(sw);
+        }, 600);
+      });
+      const cancel = () => {
+        if (pressTimer) clearTimeout(pressTimer);
+        pressTimer = null;
+      };
+      sw.addEventListener("pointerup", (e) => {
+        cancel();
+        if (longPressed) {
+          // Eat the trailing click so it doesn't fire the preset.
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      });
+      sw.addEventListener("pointermove", cancel);
+      sw.addEventListener("pointerleave", cancel);
+      sw.addEventListener("pointercancel", cancel);
+      sw.addEventListener("contextmenu", (e) => {
+        // Right-click on desktop → also open the delete prompt.
+        e.preventDefault();
+        this._maybeDeletePreset(sw);
+      });
+    });
+  }
+
+  _maybeDeletePreset(sw) {
+    const idx = parseInt(sw.dataset.presetIndex, 10);
+    const all = this._allPresets();
+    const p = all[idx];
+    if (!p || !p._user) return;
+    // user-preset index in this._userPresets:
+    const yamlCount = (Array.isArray(this._config.presets)
+                       ? this._config.presets.length : 0);
+    const userIdx = idx - yamlCount;
+    if (userIdx < 0 || userIdx >= (this._userPresets || []).length) return;
+    if (!window.confirm(`Delete preset "${p.name}"?`)) return;
+    this._userPresets.splice(userIdx, 1);
+    this._saveUserPresets();
+    this._lastRenderedKey = "";
+    this._render();
   }
 
   // Returns the current V (0..1) for any new outgoing color.

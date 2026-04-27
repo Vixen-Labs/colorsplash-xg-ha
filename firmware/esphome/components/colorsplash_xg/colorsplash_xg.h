@@ -101,6 +101,14 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
 
+  // Most recent recipe returned by pick_color(). The card reads
+  // this to save user presets directly as (start_byte, wait_ms)
+  // pairs that reproduce the exact color the user picked, rather
+  // than re-running the LUT search from a stored RGB. See #53.
+  optional<PickRecipe> last_picked_recipe() const {
+    return this->last_picked_recipe_;
+  }
+
   // Most recent "preset" byte sent — one of the 12 visible effects
   // (0x01..0x0c). Used by the light entity to decide what to send
   // when HA requests ON without a selected effect. Not updated for
@@ -187,6 +195,7 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   optional<uint8_t> last_queued_byte_;
   uint32_t last_queued_at_ms_{0};
   optional<uint8_t> last_preset_byte_;
+  optional<PickRecipe> last_picked_recipe_;
   bool last_send_was_return_{false};
   std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 

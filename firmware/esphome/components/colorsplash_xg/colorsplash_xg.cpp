@@ -586,6 +586,7 @@ ColorSplashXG::PickRecipe ColorSplashXG::pick_color(
            r, g, b, rec.name, rec.start_byte,
            rec.is_solid ? "(solid)" : "(show-scrub)",
            rec.wait_ms, rec.r, rec.g, rec.b, rec.distance);
+  this->last_picked_recipe_ = rec;
   this->send_effect_byte(rec.start_byte);
   if (!rec.is_solid && rec.wait_ms > 0) {
     // Schedule the Lock byte after wait_ms. Use ESPHome's scheduler

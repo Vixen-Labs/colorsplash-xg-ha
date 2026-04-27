@@ -246,6 +246,23 @@ text_sensor:
       std::snprintf(buf, sizeof(buf), "0x%02x", *e);
       return std::string(buf);
 
+  # Most recent recipe returned by the picker — exposed as
+  # "0x<byte>,<wait_ms>" so the JS card can save user presets
+  # directly as (start_byte, wait_ms) pairs that reproduce the
+  # exact color via the pool_scrub service. Empty string until
+  # the first pick_color() call. See issue #53.
+  - platform: template
+    name: "Pool Last Picked Recipe"
+    id: pool_last_picked_recipe
+    update_interval: 2s
+    lambda: |-
+      auto rec = id(xg).last_picked_recipe();
+      if (!rec.has_value()) return std::string("");
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), "0x%02x,%u",
+                    rec->start_byte, (unsigned) rec->wait_ms);
+      return std::string(buf);
+
 # Numeric diagnostics (#13). RSSI is polled every 30 s while
 # connected; the two counters are monotonic-within-session totals
 # that reset on reboot.
