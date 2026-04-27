@@ -426,7 +426,7 @@ class ColorSplashCard extends HTMLElement {
 
   // ---- event handling ----
 
-  _onClick(e) {
+  async _onClick(e) {
     const t = e.target.closest("[data-action]");
     if (!t) return;
     const action = t.dataset.action;
@@ -436,37 +436,43 @@ class ColorSplashCard extends HTMLElement {
 
     switch (action) {
       case "toggle":
-        hass.callService("light", "toggle", {entity_id: cfg.light_entity});
+        await hass.callService(
+            "light", "toggle", {entity_id: cfg.light_entity});
         break;
 
       case "solid":
-        // Press the solid's button entity. Then explicitly clear
-        // the active effect on the light so HA state doesn't drift
-        // (the bridge does this automatically on the LVGL UI but
-        // HA's effect attribute is independent state).
-        hass.callService("button", "press",
-                         {entity_id:
-                          `button.${cfg.prefix}${t.dataset.button}`});
-        hass.callService("light", "turn_on",
-                         {entity_id: cfg.light_entity, effect: "None"});
+        // Press the solid's button entity FIRST so the bridge's
+        // last_preset_byte is updated to the new colour. Then
+        // call light.turn_on with effect: None so HA's light
+        // entity flips to on + clears the effect attribute. The
+        // light.turn_on triggers the bridge's write_state which
+        // re-sends last_preset_byte; the dedup window in
+        // send_effect_byte (500 ms) catches the duplicate.
+        await hass.callService("button", "press",
+                               {entity_id:
+                                `button.${cfg.prefix}${t.dataset.button}`});
+        await hass.callService("light", "turn_on",
+                               {entity_id: cfg.light_entity,
+                                effect: "None"});
         break;
 
       case "return":
-        hass.callService("button", "press",
-                         {entity_id: cfg.return_entity});
-        hass.callService("light", "turn_on",
-                         {entity_id: cfg.light_entity, effect: "None"});
+        await hass.callService("button", "press",
+                               {entity_id: cfg.return_entity});
+        await hass.callService("light", "turn_on",
+                               {entity_id: cfg.light_entity,
+                                effect: "None"});
         break;
 
       case "show":
-        hass.callService("light", "turn_on",
-                         {entity_id: cfg.light_entity,
-                          effect: t.dataset.effect});
+        await hass.callService("light", "turn_on",
+                               {entity_id: cfg.light_entity,
+                                effect: t.dataset.effect});
         break;
 
       case "lock":
-        hass.callService("button", "press",
-                         {entity_id: cfg.lock_entity});
+        await hass.callService("button", "press",
+                               {entity_id: cfg.lock_entity});
         break;
 
       case "preset": {
@@ -481,13 +487,14 @@ class ColorSplashCard extends HTMLElement {
         }
         // Service IDs in HA are dot-separated "domain.service".
         const [domain, name] = cfg.scrub_service.split(".", 2);
-        hass.callService(domain, name, {
+        await hass.callService(domain, name, {
           start_byte: p.start_byte | 0,
           wait_ms: p.wait_ms | 0,
         });
-        // Mirror the colour-pick state: clear active effect.
-        hass.callService("light", "turn_on",
-                         {entity_id: cfg.light_entity, effect: "None"});
+        // Mirror the colour-pick state: light on, effect cleared.
+        await hass.callService("light", "turn_on",
+                               {entity_id: cfg.light_entity,
+                                effect: "None"});
         break;
       }
     }
