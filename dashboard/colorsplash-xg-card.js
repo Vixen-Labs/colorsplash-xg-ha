@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.6";
+const VERSION = "0.7.7";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -500,10 +500,7 @@ class ColorSplashCard extends HTMLElement {
         display: flex;
         align-items: center;
         justify-content: center;
-      }
-      .swatch.return .badge {
-        font-size: 1.1em;
-        font-weight: 700;
+        --mdc-icon-size: 22px;
         color: var(--primary-text-color, #fff);
       }
 
@@ -530,8 +527,9 @@ class ColorSplashCard extends HTMLElement {
         background: var(--divider-color, #3a3a3c);
       }
       .effect-icon {
-        font-size: 1.2em;
+        --mdc-icon-size: 20px;
         line-height: 1;
+        flex: 0 0 auto;
       }
       .effect-trigger .chevron {
         margin-left: auto;
@@ -603,12 +601,14 @@ class ColorSplashCard extends HTMLElement {
         font-weight: 600;
         cursor: pointer;
         transition: transform 0.08s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        --mdc-icon-size: 20px;
       }
       .lock-btn:active {
         transform: scale(0.97);
-      }
-      .lock-btn::before {
-        content: "🔒  ";
       }
 
       /* ─── Error banner ──────────────────────────────────── */
@@ -708,7 +708,7 @@ class ColorSplashCard extends HTMLElement {
               data-action="return"
               title="Return — replay last-locked color"
               aria-label="Return to last-locked color">
-        <span class="badge">R</span>
+        <ha-icon icon="mdi:lock-reset"></ha-icon>
       </button>`;
 
     // User presets — each has {name, hex, start_byte, wait_ms}.
@@ -794,7 +794,7 @@ class ColorSplashCard extends HTMLElement {
         <div class="effect-section">
           <button class="${triggerClass}"
                   data-action="toggle-effects">
-            <span class="effect-icon">✨</span>
+            <ha-icon class="effect-icon" icon="mdi:creation"></ha-icon>
             <span>${triggerLabel}</span>
             <span class="chevron">▼</span>
           </button>
@@ -804,7 +804,8 @@ class ColorSplashCard extends HTMLElement {
         </div>
 
         <button class="lock-btn" data-action="lock">
-          Lock current color
+          <ha-icon icon="mdi:lock"></ha-icon>
+          <span>Lock current color</span>
         </button>
       </div>
     `;
