@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.7.4";
+const VERSION = "0.7.5";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -114,9 +114,12 @@ function hexToRgb(hex) {
 
 // Matches HA's luminosity() helper from frontend/src/common/color/rgb.
 // Returns sRGB-weighted luminance in 0..1; > 0.8 reads as "light".
+function luminosityRgb(r, g, b) {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
 function luminosity(hex) {
   const [r, g, b] = hexToRgb(hex);
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminosityRgb(r, g, b);
 }
 
 // Build a CSS gradient string for a show preview swatch. Uses
@@ -342,7 +345,15 @@ class ColorSplashCard extends HTMLElement {
         justify-content: center;
         --mdc-icon-size: 24px;
         color: var(--state-icon-color, #a0a0a0);
+        border: 1px solid transparent;
+        background-clip: padding-box;
         transition: background-color 0.18s ease, color 0.18s ease;
+      }
+      /* Mirrors the .swatch.light convention: when the tile is
+         showing a light/white tint, give it a divider-coloured
+         outline so it reads cleanly on light backgrounds. */
+      .tile-icon.light {
+        border-color: var(--divider-color, rgba(127,127,127,0.4));
       }
       .tile-text {
         flex: 1 1 auto;
@@ -560,6 +571,10 @@ class ColorSplashCard extends HTMLElement {
         border: 1px solid var(--divider-color,
                               rgba(127,127,127,0.4));
       }
+      .effect-swatch.none {
+        background: transparent;
+        border-style: dashed;
+      }
       .effect-item.active {
         background: var(--secondary-background-color, #2c2c2e);
         font-weight: 600;
@@ -638,10 +653,14 @@ class ColorSplashCard extends HTMLElement {
     // dismissing the effect (effect: None) returns the fixture
     // to that colour, so it represents the "underlying" state.
     let iconStyle = "";
+    let iconClass = "tile-icon";
     if (isOn && rgbColor) {
       const rgbCss = `rgb(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]})`;
       const rgbBg = `rgba(${rgbColor[0]},${rgbColor[1]},${rgbColor[2]},0.22)`;
       iconStyle = `color:${rgbCss};background:${rgbBg};`;
+      if (luminosityRgb(rgbColor[0], rgbColor[1], rgbColor[2]) > 0.8) {
+        iconClass = "tile-icon light";
+      }
     }
 
     // Wheel cursor position. Stays pinned to the last rgb_color
@@ -707,7 +726,19 @@ class ColorSplashCard extends HTMLElement {
         ? "effect-trigger open" : "effect-trigger";
     const listClass = this._effectsOpen
         ? "effect-list open" : "effect-list";
-    const effectItems = SHOWS.map((sh) => {
+    // "None" tops the list so the user can stop a running show.
+    // Picking it fires light.turn_on(effect: None); the firmware
+    // falls through to last_preset replay and the fixture
+    // returns to the most recent solid.
+    const noneItemClass = !hasEffect
+        ? "effect-item active" : "effect-item";
+    const noneItem = `<button class="${noneItemClass}"
+                              data-action="show"
+                              data-effect="None">
+                        <span class="effect-swatch none"></span>
+                        <span>None</span>
+                      </button>`;
+    const showItems = SHOWS.map((sh) => {
       const grad = showGradient(sh);
       const itemClass = activeEffect === sh.effect
           ? "effect-item active" : "effect-item";
@@ -719,6 +750,7 @@ class ColorSplashCard extends HTMLElement {
                 <span>${sh.name}</span>
               </button>`;
     }).join("");
+    const effectItems = noneItem + showItems;
 
     return `
       <div class="card">
@@ -726,7 +758,7 @@ class ColorSplashCard extends HTMLElement {
 
         <button class="${tileClass}" data-action="toggle"
                 aria-label="${stateText}">
-          <div class="tile-icon" style="${iconStyle}">
+          <div class="${iconClass}" style="${iconStyle}">
             <ha-icon icon="${isOn ? "mdi:lightbulb" : "mdi:lightbulb-off"}"></ha-icon>
           </div>
           <div class="tile-text">
