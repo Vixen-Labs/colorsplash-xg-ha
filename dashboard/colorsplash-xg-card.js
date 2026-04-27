@@ -23,7 +23,7 @@
  * built-in Lovelace runtime which provides hass + setConfig.
  */
 
-const VERSION = "0.3.1";
+const VERSION = "0.4.0";
 
 // 5 documented solid presets (from PROTOCOL.md and the firmware's
 // SOLID_COLORS table). RGB values are the canonical bright primaries
@@ -42,16 +42,23 @@ const SOLIDS = [
 // gradients. For shows with truncated gradients, we use endpoints
 // + a midpoint guess; full fidelity is left for a future re-grep
 // of the app decompile.
+//
+// `discrete: true` means the show jumps between distinct colours
+// without blending, so the preview tile renders the colours as
+// hard-edged slices instead of a smooth gradient. Nova and Super
+// Nova fall into this category.
 const SHOWS = [
   {
     name: "Nova",
     effect: "Nova",
+    discrete: true,
     gradient: ["#FEEA00", "#71CD2E", "#02ADF9", "#1649D5", "#DC0BB3",
                "#FFBF1C", "#17B63F", "#00B2E1", "#205ADB", "#CB00A9"],
   },
   {
     name: "Super Nova",
     effect: "Super Nova",
+    discrete: true,
     gradient: ["#FEEA00", "#71CD2E", "#02ADF9", "#1649D5", "#DC0BB3",
                "#FFBF1C", "#17B63F", "#00B2E1", "#205ADB", "#CB00A9"],
   },
@@ -258,13 +265,22 @@ class ColorSplashCard extends HTMLElement {
       }
       .swatch, .show-tile, .control-tile {
         position: relative;
-        border-radius: 10px;
-        height: 56px;
         cursor: pointer;
         border: 2px solid transparent;
         overflow: hidden;
         transition: transform 0.08s ease, border-color 0.15s ease;
         user-select: none;
+      }
+      /* Solid + Return swatches are circular discs — round so they
+         read as colour samples, not buttons. Show tiles stay
+         rounded-rect so the names fit. */
+      .swatch {
+        border-radius: 50%;
+        aspect-ratio: 1 / 1;
+      }
+      .show-tile, .control-tile {
+        border-radius: 10px;
+        height: 56px;
       }
       .swatch:active,
       .show-tile:active,
@@ -391,9 +407,24 @@ class ColorSplashCard extends HTMLElement {
          </div>`;
 
     const showTiles = SHOWS.map((sh) => {
-      const grad = sh.gradient.length === 1
-          ? sh.gradient[0]
-          : `linear-gradient(135deg, ${sh.gradient.join(", ")})`;
+      let grad;
+      if (sh.gradient.length === 1) {
+        grad = sh.gradient[0];
+      } else if (sh.discrete) {
+        // Hard-edged slices at the same 135° angle as the
+        // smooth-blend shows — colour i fills the band from
+        // (i / N)% to ((i+1) / N)%, with the next colour
+        // starting at the same boundary so there's no
+        // interpolation across the seam.
+        const n = sh.gradient.length;
+        const stops = sh.gradient.flatMap((c, i) => [
+          `${c} ${(i / n) * 100}%`,
+          `${c} ${((i + 1) / n) * 100}%`,
+        ]);
+        grad = `linear-gradient(135deg, ${stops.join(", ")})`;
+      } else {
+        grad = `linear-gradient(135deg, ${sh.gradient.join(", ")})`;
+      }
       const cls = activeEffect === sh.effect ? "show-tile active" : "show-tile";
       return `<div class="${cls}" data-action="show"
                    data-effect="${sh.effect}"
