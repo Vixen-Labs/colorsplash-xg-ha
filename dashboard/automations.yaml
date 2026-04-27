@@ -1,0 +1,160 @@
+# Example Home Assistant automations for ColorSplash XG
+#
+# Copy individual blocks into HA's `automations.yaml` (or create
+# them via the UI editor). Adjust entity IDs to match your setup
+# — the headless bridge defaults to `colorsplash-xg-bridge` so
+# entities are named `light.pool_light`, `button.pool_*`,
+# `sensor.pool_ble_rssi`, etc.
+#
+# All examples use the headless variant's entities. The display
+# variant has the same entity names (only the YAML config differs)
+# so these work there too.
+
+# ─── On at sunset, off at sunrise ─────────────────────────────────
+# Most common automation. Turns the pool light on at the user's
+# preferred shade of light at dusk, off again at dawn.
+
+- alias: "Pool light on at sunset"
+  description: "Turn pool light on (last colour) at sunset"
+  trigger:
+    - platform: sun
+      event: sunset
+      offset: "+00:15:00"  # 15 min after sunset, when it's dusk
+  condition:
+    # Don't fight the user — only auto-on if the light is already
+    # off (i.e. they didn't turn it off manually for some reason).
+    - condition: state
+      entity_id: light.pool_light
+      state: "off"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.pool_light
+
+- alias: "Pool light off at sunrise"
+  description: "Turn pool light off at sunrise"
+  trigger:
+    - platform: sun
+      event: sunrise
+      offset: "-00:15:00"  # 15 min before sunrise
+  condition:
+    - condition: state
+      entity_id: light.pool_light
+      state: "on"
+  action:
+    - service: light.turn_off
+      target:
+        entity_id: light.pool_light
+
+# ─── Specific effect at a specific time ───────────────────────────
+# E.g., switch to Patriot Dream every July 4th at 8 PM.
+
+- alias: "Pool: Patriot Dream on July 4 at sunset"
+  description: "Festive show for Independence Day"
+  trigger:
+    - platform: time
+      at: "20:00:00"
+  condition:
+    - condition: template
+      value_template: "{{ now().month == 7 and now().day == 4 }}"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.pool_light
+      data:
+        effect: "Patriot Dream"
+
+# ─── Notification when the BLE link drops ─────────────────────────
+# The bridge auto-reconnects, but you might want to know that it
+# briefly went down (especially during early debugging).
+
+- alias: "Pool: notify when BLE drops"
+  description: "Push a phone notification on BLE-link disconnect"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.pool_ble_connected
+      from: "on"
+      to: "off"
+      for: "00:01:00"  # ignore brief blips < 1 min
+  action:
+    - service: notify.mobile_app  # adjust to your notify service
+      data:
+        title: "Pool light bridge"
+        message: >
+          BLE link dropped at {{ now().strftime('%H:%M') }}.
+          Bridge is auto-reconnecting; check
+          binary_sensor.pool_ble_connected.
+
+# ─── Notification on weak RSSI ────────────────────────────────────
+# Useful if you're dialing in the bridge's location.
+
+- alias: "Pool: notify on weak BLE signal"
+  description: "Alert when RSSI worsens past the stable threshold"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.pool_ble_rssi
+      below: -85
+      for: "00:05:00"
+  action:
+    - service: notify.mobile_app
+      data:
+        title: "Pool light bridge"
+        message: >
+          BLE RSSI fell to {{ states('sensor.pool_ble_rssi') }} dBm —
+          below the stable-link threshold. Consider relocating the
+          bridge closer to the controller.
+
+# ─── Lock-and-Return scene from the colorsplash-specific buttons ──
+# Useful for capturing a "favourite moment" mid-show and replaying
+# it later.
+
+- alias: "Pool: capture current colour as 'last locked'"
+  description: "Press to save the colour the fixture is showing now"
+  trigger:
+    - platform: state
+      entity_id: input_button.pool_capture_colour  # add to HA
+  action:
+    - service: button.press
+      target:
+        entity_id: button.pool_color_lock
+
+- alias: "Pool: replay last-locked colour"
+  description: "Press to recall the colour previously locked"
+  trigger:
+    - platform: state
+      entity_id: input_button.pool_recall_colour
+  action:
+    - service: button.press
+      target:
+        entity_id: button.pool_color_return
+
+# ─── Phase 4b RGB colour-pick examples (experimental) ─────────────
+# Only works on firmware including the embedded LUT (commit
+# 2028b2e or later). Calls the bridge's pool_set_rgb service
+# to drive the fixture to a specific observed colour.
+
+- alias: "Pool: warm orange at sunset transition"
+  description: >
+    Drive the fixture to a warm orange via the show-scrub picker.
+    Lands on whatever Desert Skies' amber sample matches closest.
+  trigger:
+    - platform: sun
+      event: sunset
+  action:
+    - service: esphome.colorsplash_xg_bridge_pool_set_rgb
+      data:
+        red: 200
+        green: 130
+        blue: 50
+
+- alias: "Pool: deep blue for nighttime"
+  description: "Drive the fixture to a deep blue (Parisian Blue solid)"
+  trigger:
+    - platform: time
+      at: "22:00:00"
+  action:
+    - service: esphome.colorsplash_xg_bridge_pool_set_rgb
+      data:
+        red: 30
+        green: 30
+        blue: 200
