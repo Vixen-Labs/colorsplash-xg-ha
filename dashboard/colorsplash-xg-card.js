@@ -2,12 +2,13 @@
  * ColorSplash XG custom Lovelace card.
  *
  * Visual design follows HA's native more-info-light dialog
- * (favorite-color-button + state-control-light-color-picker
- * patterns from the home-assistant/frontend repo). Adapted to
- * our constrained palette + show-scrub picker:
+ * (favorite-color-button, state-control-light-color-picker,
+ * tile-card-features patterns from the home-assistant/frontend
+ * repo). Adapted to our constrained palette + show-scrub
+ * picker:
  *
- *   - Header: title + slider toggle
- *   - State label: shows current colour / show / "Off"
+ *   - Big tile-style toggle button (full-width, tap to toggle)
+ *   - HSV colour wheel (drag to pick → light.turn_on rgb_color)
  *   - Swatches row: 5 solids + Return badge + saved presets
  *   - Effect dropdown: collapsible list with circular show
  *     swatch (gradient or discrete-slice) per entry
@@ -22,15 +23,16 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 
-// 5 documented solid presets.
+// 5 documented solid presets, in rainbow order with white at
+// the front. Return badge follows the swatches in _buildHTML.
 const SOLIDS = [
-  {name: "Parisian Blue",      btn: "pool_parisian_blue",      hex: "#0000FF"},
-  {name: "Brazilian Red",      btn: "pool_brazilian_red",      hex: "#FF0000"},
   {name: "Arctic White",       btn: "pool_arctic_white",       hex: "#FFFFFF"},
-  {name: "Miami Pink",         btn: "pool_miami_pink",         hex: "#FF00FF"},
+  {name: "Brazilian Red",      btn: "pool_brazilian_red",      hex: "#FF0000"},
   {name: "New Zealand Green",  btn: "pool_new_zealand_green",  hex: "#00FF00"},
+  {name: "Parisian Blue",      btn: "pool_parisian_blue",      hex: "#0000FF"},
+  {name: "Miami Pink",         btn: "pool_miami_pink",         hex: "#FF00FF"},
 ];
 
 // 7 documented shows. `discrete: true` → preview tile renders
@@ -95,6 +97,9 @@ const DEFAULTS = {
   presets: [],
 };
 
+const WHEEL_SIZE = 220;     // px — outer diameter of the HSV wheel
+const WHEEL_THROTTLE = 90;  // ms between rgb_color writes during drag
+
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -130,8 +135,83 @@ function showGradient(sh) {
   return `linear-gradient(135deg, ${sh.gradient.join(", ")})`;
 }
 
+// HSV → RGB at full V (1.0). h is 0..360, s is 0..1.
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r1, g1, b1;
+  if (h < 60)       [r1, g1, b1] = [c, x, 0];
+  else if (h < 120) [r1, g1, b1] = [x, c, 0];
+  else if (h < 180) [r1, g1, b1] = [0, c, x];
+  else if (h < 240) [r1, g1, b1] = [0, x, c];
+  else if (h < 300) [r1, g1, b1] = [x, 0, c];
+  else              [r1, g1, b1] = [c, 0, x];
+  return [
+    Math.round((r1 + m) * 255),
+    Math.round((g1 + m) * 255),
+    Math.round((b1 + m) * 255),
+  ];
+}
+
+function rgbToHsv(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r)      h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else                h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
+}
+
+// Pre-render the HSV wheel into an offscreen canvas exactly once.
+// Returns a data URL that can be set as <img src=...>; embedding
+// as an image avoids re-rasterising on every card render.
+function buildWheelDataUrl(size) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(size, size);
+  const r = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - r;
+      const dy = y - r;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const idx = (y * size + x) * 4;
+      if (dist > r) {
+        img.data[idx + 3] = 0;
+        continue;
+      }
+      // Match HA's wheel orientation: 0° = top (red is up), hue
+      // sweeps clockwise. atan2 returns angle from +x axis CCW,
+      // so we shift by 90° and negate to align.
+      const angle = Math.atan2(dx, -dy);  // 0 at top, +ve clockwise
+      const h = ((angle * 180 / Math.PI) + 360) % 360;
+      const s = Math.min(1, dist / r);
+      const [R, G, B] = hsvToRgb(h, s, 1);
+      img.data[idx]     = R;
+      img.data[idx + 1] = G;
+      img.data[idx + 2] = B;
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL();
+}
+
 
 // ─── Card class ─────────────────────────────────────────────────────
+
+let WHEEL_IMAGE_CACHE = null;
 
 class ColorSplashCard extends HTMLElement {
   constructor() {
@@ -140,6 +220,13 @@ class ColorSplashCard extends HTMLElement {
     this._delegated = false;
     this._lastRenderedKey = "";
     this._effectsOpen = false;
+    this._wheelDragging = false;
+    this._lastWheelEmit = 0;
+    this._wheelCursor = null;  // {hue, sat} or null
+
+    if (!WHEEL_IMAGE_CACHE) {
+      WHEEL_IMAGE_CACHE = buildWheelDataUrl(WHEEL_SIZE);
+    }
   }
 
   setConfig(config) {
@@ -160,7 +247,7 @@ class ColorSplashCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 5;
+    return 7;
   }
 
   // ---- rendering ----
@@ -170,13 +257,14 @@ class ColorSplashCard extends HTMLElement {
     const cfg = this._config;
     const lightState = this._hass.states[cfg.light_entity];
     const isOn = lightState && lightState.state === "on";
-    const activeEffect = lightState && lightState.attributes
-        ? lightState.attributes.effect
-        : null;
+    const attrs = lightState ? lightState.attributes || {} : {};
+    const activeEffect = attrs.effect || null;
+    const rgbColor = Array.isArray(attrs.rgb_color) ? attrs.rgb_color : null;
     const lightFound = !!lightState;
 
     const key = [
       lightFound, isOn, activeEffect || "",
+      rgbColor ? rgbColor.join(",") : "",
       this._effectsOpen,
       JSON.stringify(cfg.presets || []),
     ].join("|");
@@ -187,12 +275,14 @@ class ColorSplashCard extends HTMLElement {
 
     this.shadowRoot.innerHTML =
         `<style>${this._buildStyle()}</style>` +
-        this._buildHTML(isOn, activeEffect, lightFound);
+        this._buildHTML(isOn, activeEffect, lightFound, rgbColor);
 
     if (!this._delegated) {
       this.shadowRoot.addEventListener("click", (e) => this._onClick(e));
       this._delegated = true;
     }
+
+    this._wireWheel();
   }
 
   _buildStyle() {
@@ -212,67 +302,145 @@ class ColorSplashCard extends HTMLElement {
                      var(--divider-color, transparent));
       }
 
-      /* ─── Header ────────────────────────────────────────── */
-      .header {
+      /* ─── Big tile-style toggle ─────────────────────────────
+         Mirrors HA's tile-card layout: icon on the left, name +
+         state stacked, switch indicator on the right. The whole
+         tile is the click target. */
+      .tile {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        margin-bottom: 12px;
+        gap: 14px;
+        background: var(--secondary-background-color, #2c2c2e);
+        border: 1px solid transparent;
+        border-radius: 14px;
+        padding: 14px 16px;
+        cursor: pointer;
+        width: 100%;
+        text-align: left;
+        color: inherit;
+        font: inherit;
+        transition: background-color 0.15s ease;
       }
-      .title {
-        font-size: 1.1em;
+      .tile:hover {
+        background: var(--divider-color, #3a3a3c);
+      }
+      .tile.on {
+        background: rgba(255, 200, 80, 0.18);
+      }
+      .tile-icon {
+        flex: 0 0 auto;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        background: var(--secondary-background-color, #1c1c1e);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.4em;
+        color: var(--state-icon-color, #a0a0a0);
+        transition: background-color 0.18s ease, color 0.18s ease;
+      }
+      .tile.on .tile-icon {
+        background: rgba(255, 200, 80, 0.25);
+        color: var(--state-icon-active-color, #f9a825);
+      }
+      .tile-text {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .tile-name {
+        font-size: 1em;
         font-weight: 500;
+        color: var(--primary-text-color, #fff);
+      }
+      .tile-state {
+        font-size: 0.85em;
+        color: var(--secondary-text-color, #a0a0a0);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
-      /* HA's standard switch shape. Matches ha-switch via
-         --switch-checked-* and --switch-unchecked-* CSS vars. */
-      .toggle {
+      /* HA's standard switch shape inside the tile. */
+      .toggle-indicator {
         position: relative;
-        width: 44px;
-        height: 24px;
+        width: 40px;
+        height: 22px;
         background: var(--switch-unchecked-track-color,
                         var(--secondary-background-color, #6b6b6b));
-        border: none;
         border-radius: 999px;
-        padding: 0;
-        cursor: pointer;
+        flex: 0 0 auto;
+        pointer-events: none;
         transition: background-color 0.18s ease;
-        outline: none;
-        font-size: 0;
       }
-      .toggle::before {
+      .toggle-indicator::before {
         content: "";
         position: absolute;
         top: 3px;
         left: 3px;
-        width: 18px;
-        height: 18px;
+        width: 16px;
+        height: 16px;
         border-radius: 50%;
         background: var(--switch-unchecked-button-color, #fafafa);
         box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         transition: left 0.18s ease, background-color 0.18s ease;
       }
-      .toggle.on {
+      .tile.on .toggle-indicator {
         background: var(--switch-checked-track-color,
                         var(--primary-color, #03a9f4));
       }
-      .toggle.on::before {
-        left: 23px;
+      .tile.on .toggle-indicator::before {
+        left: 21px;
         background: var(--switch-checked-button-color, #fff);
       }
 
-      /* ─── State label (big "Off" / current effect / etc.) ─ */
-      .state-label {
-        text-align: center;
-        font-size: 1.6em;
-        font-weight: 400;
-        margin: 14px 0 4px;
-      }
-      .state-sublabel {
-        text-align: center;
-        font-size: 0.85em;
+      /* ─── Section heading ──────────────────────────────────── */
+      .section-label {
+        font-size: 0.72em;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
         color: var(--secondary-text-color, #a0a0a0);
-        margin-bottom: 18px;
+        margin: 18px 0 10px;
+      }
+
+      /* ─── Colour wheel ──────────────────────────────────────
+         Pre-rendered HSV wheel; the cursor dot is positioned
+         absolutely over it to indicate the current selection. */
+      .wheel-wrap {
+        position: relative;
+        width: ${WHEEL_SIZE}px;
+        height: ${WHEEL_SIZE}px;
+        margin: 4px auto 8px;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .wheel {
+        width: 100%;
+        height: 100%;
+        display: block;
+        border-radius: 50%;
+        cursor: crosshair;
+        -webkit-user-drag: none;
+      }
+      .wheel-cursor {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.5),
+                    inset 0 0 0 1px rgba(0,0,0,0.4);
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+      }
+      .wheel-cursor.active {
+        opacity: 1;
       }
 
       /* ─── Swatch grid ─────────────────────────────────────
@@ -320,12 +488,6 @@ class ColorSplashCard extends HTMLElement {
         font-size: 1.1em;
         font-weight: 700;
         color: var(--primary-text-color, #fff);
-      }
-      .swatch.preset {
-        position: relative;
-      }
-      .preset-name-tooltip {
-        /* tooltip via title attribute — no inline label */
       }
 
       /* ─── Effect dropdown ───────────────────────────────── */
@@ -447,10 +609,9 @@ class ColorSplashCard extends HTMLElement {
     `;
   }
 
-  _buildHTML(isOn, activeEffect, lightFound) {
+  _buildHTML(isOn, activeEffect, lightFound, rgbColor) {
     const cfg = this._config;
-    const toggleClass = isOn ? "toggle on" : "toggle";
-    const toggleAria = isOn ? "Pool light on" : "Pool light off";
+    const tileClass = isOn ? "tile on" : "tile";
 
     const errorBanner = lightFound ? "" : `
       <div class="error-banner">
@@ -460,18 +621,35 @@ class ColorSplashCard extends HTMLElement {
         Developer Tools → States.
       </div>`;
 
-    // State label (the big "Off" / "Nova" / "On" text under the
-    // header — mimics the prominent state display in HA's
-    // more-info-light dialog).
-    let stateMain;
-    let stateSub = "";
+    // Big tile state line.
+    let stateText;
     if (!isOn) {
-      stateMain = "Off";
+      stateText = "Off";
     } else if (activeEffect && activeEffect !== "None") {
-      stateMain = activeEffect;
-      stateSub = "Show";
+      stateText = activeEffect;
+    } else if (rgbColor) {
+      stateText = `On — RGB ${rgbColor.join(", ")}`;
     } else {
-      stateMain = "On";
+      stateText = "On";
+    }
+
+    // Wheel cursor position (only meaningful when isOn and we
+    // have an rgb_color attribute — the picker reflects the
+    // last colour HA sent).
+    let cursorStyle = "";
+    let cursorActive = "";
+    if (isOn && rgbColor) {
+      const [h, s] = rgbToHsv(rgbColor[0], rgbColor[1], rgbColor[2]);
+      // h: 0=top, sweeps clockwise — invert the buildWheel mapping.
+      const angleRad = h * Math.PI / 180;
+      const cx = WHEEL_SIZE / 2;
+      const cy = WHEEL_SIZE / 2;
+      const r = s * (WHEEL_SIZE / 2);
+      const x = cx + Math.sin(angleRad) * r;
+      const y = cy - Math.cos(angleRad) * r;
+      cursorStyle = `left:${x}px;top:${y}px;` +
+                    `background:rgb(${rgbColor.join(",")});`;
+      cursorActive = "active";
     }
 
     // Solid swatches — circular discs with HA-style border
@@ -532,15 +710,26 @@ class ColorSplashCard extends HTMLElement {
     return `
       <div class="card">
         ${errorBanner}
-        <div class="header">
-          <span class="title">Pool Light</span>
-          <button class="${toggleClass}" data-action="toggle"
-                  aria-label="${toggleAria}"></button>
-        </div>
 
-        <div class="state-label">${stateMain}</div>
-        ${stateSub ? `<div class="state-sublabel">${stateSub}</div>`
-                   : `<div style="height:18px;"></div>`}
+        <button class="${tileClass}" data-action="toggle"
+                aria-label="${stateText}">
+          <div class="tile-icon">💡</div>
+          <div class="tile-text">
+            <div class="tile-name">Pool Light</div>
+            <div class="tile-state">${stateText}</div>
+          </div>
+          <div class="toggle-indicator"></div>
+        </button>
+
+        <div class="section-label">Colour</div>
+        <div class="wheel-wrap" data-wheel>
+          <img class="wheel"
+               src="${WHEEL_IMAGE_CACHE}"
+               draggable="false"
+               alt="Colour wheel" />
+          <div class="wheel-cursor ${cursorActive}"
+               style="${cursorStyle}"></div>
+        </div>
 
         <div class="swatches">
           ${solidSwatches}
@@ -597,8 +786,7 @@ class ColorSplashCard extends HTMLElement {
         break;
 
       case "return":
-        // Don't call light.turn_on after — bridge handles state via
-        // last_send_was_return short-circuit.
+        // Bridge handles state via last_send_was_return short-circuit.
         await hass.callService("button", "press",
             {entity_id: cfg.return_entity});
         await hass.callService("light", "turn_on",
@@ -610,7 +798,7 @@ class ColorSplashCard extends HTMLElement {
             {entity_id: cfg.light_entity, effect: t.dataset.effect});
         // Close the dropdown after picking, mirroring native HA UX.
         this._effectsOpen = false;
-        this._lastRenderedKey = "";  // bust cache → re-render
+        this._lastRenderedKey = "";
         this._render();
         break;
 
@@ -643,6 +831,79 @@ class ColorSplashCard extends HTMLElement {
       }
     }
   }
+
+  // ---- colour wheel pointer handling ----
+
+  _wireWheel() {
+    const wrap = this.shadowRoot.querySelector("[data-wheel]");
+    if (!wrap) return;
+    wrap.addEventListener("pointerdown", (e) => this._onWheelDown(e));
+    wrap.addEventListener("pointermove", (e) => this._onWheelMove(e));
+    wrap.addEventListener("pointerup",   (e) => this._onWheelUp(e));
+    wrap.addEventListener("pointercancel", (e) => this._onWheelUp(e));
+  }
+
+  _onWheelDown(e) {
+    e.preventDefault();
+    this._wheelDragging = true;
+    e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId);
+    this._emitWheelColour(e, true);
+  }
+
+  _onWheelMove(e) {
+    if (!this._wheelDragging) return;
+    e.preventDefault();
+    this._emitWheelColour(e, false);
+  }
+
+  _onWheelUp(e) {
+    if (!this._wheelDragging) return;
+    this._wheelDragging = false;
+    // Final commit on release, ignoring throttle so the last
+    // position always lands.
+    this._emitWheelColour(e, true);
+  }
+
+  _emitWheelColour(e, force) {
+    const wrap = this.shadowRoot.querySelector("[data-wheel]");
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const r = WHEEL_SIZE / 2;
+    let x = e.clientX - rect.left - r;
+    let y = e.clientY - rect.top - r;
+    let dist = Math.sqrt(x * x + y * y);
+    if (dist > r) {
+      // Snap to the rim — picker stays inside the disc.
+      x = (x / dist) * r;
+      y = (y / dist) * r;
+      dist = r;
+    }
+    const angleRad = Math.atan2(x, -y);
+    const h = ((angleRad * 180 / Math.PI) + 360) % 360;
+    const s = Math.min(1, dist / r);
+    const [R, G, B] = hsvToRgb(h, s, 1);
+
+    // Live-update the cursor dot without a full re-render.
+    const cursor = this.shadowRoot.querySelector(".wheel-cursor");
+    if (cursor) {
+      cursor.classList.add("active");
+      cursor.style.left = `${x + r}px`;
+      cursor.style.top = `${y + r}px`;
+      cursor.style.background = `rgb(${R},${G},${B})`;
+    }
+
+    const now = Date.now();
+    if (!force && now - this._lastWheelEmit < WHEEL_THROTTLE) return;
+    this._lastWheelEmit = now;
+
+    const cfg = this._config;
+    const hass = this._hass;
+    if (!hass) return;
+    hass.callService("light", "turn_on", {
+      entity_id: cfg.light_entity,
+      rgb_color: [R, G, B],
+    });
+  }
 }
 
 
@@ -656,7 +917,7 @@ window.customCards.push({
   type: "colorsplash-xg-card",
   name: "ColorSplash XG",
   description:
-      "Pool light controls — solid colour swatches, custom show "
-      + "dropdown with circular previews, Lock + Return + on/off.",
+      "Pool light controls — big toggle tile, RGB colour wheel, "
+      + "solid swatches, custom show dropdown, Lock + Return.",
   preview: false,
 });
