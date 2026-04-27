@@ -23,7 +23,7 @@
  * built-in Lovelace runtime which provides hass + setConfig.
  */
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 // 5 documented solid presets (from PROTOCOL.md and the firmware's
 // SOLID_COLORS table). RGB values are the canonical bright primaries
@@ -491,11 +491,20 @@ class ColorSplashCard extends HTMLElement {
         break;
 
       case "return":
+        // Return (0x0e) tells the controller to replay the
+        // colour that was Locked previously. Do NOT also call
+        // light.turn_on(effect:None) afterwards — that would
+        // trigger the bridge's write_state, which falls through
+        // to last_preset_byte (the most recent show / solid)
+        // and re-fires it, overriding the Return.
+        //
+        // Side effect: HA's effect attribute on the light entity
+        // stays at whatever was last set (e.g. "Desert Skies")
+        // even though the fixture is now showing the locked
+        // colour. Functionally correct on the fixture; HA-state
+        // drift is the trade-off.
         await hass.callService("button", "press",
                                {entity_id: cfg.return_entity});
-        await hass.callService("light", "turn_on",
-                               {entity_id: cfg.light_entity,
-                                effect: "None"});
         break;
 
       case "show":
