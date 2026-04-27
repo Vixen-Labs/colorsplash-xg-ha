@@ -70,7 +70,7 @@ cards:
         icon: mdi:circle
       - type: tile
         entity: button.colorsplash_xg_bridge_pool_color_return
-        name: Return
+        name: Color Return
         color: grey
         icon: mdi:restore
 
@@ -80,6 +80,6 @@ cards:
   # selectors so the function stays obvious.
   - type: tile
     entity: button.colorsplash_xg_bridge_pool_color_lock
-    name: Lock
+    name: Color Lock
     color: amber
     icon: mdi:lock
