@@ -292,7 +292,17 @@ def main() -> int:
     # Shows in LUT_EXCLUDE_SHOWS are skipped entirely (the named
     # effect still works in HA — only the picker's matching pool
     # excludes them).
+    #
+    # Two output streams:
+    # - show_entries: loop-clipped, written to firmware.h. Keeps
+    #   the picker's max wait bounded by one loop period.
+    # - show_entries_full: un-clipped, written to the card.js.
+    #   The card's timeline visualization needs a clean loop
+    #   window (which can fall in loop iteration 1, 2, or 3
+    #   depending on where first-lit lands), so it benefits from
+    #   the full ~90 s capture per show.
     show_entries: list[tuple[int, int, int, int, int]] = []
+    show_entries_full: list[tuple[int, int, int, int, int]] = []
     show_summary: list[tuple[str, int, int, str]] = []
     for show_name, samples in data.get("shows", {}).items():
         base = show_name.split(" #")[0]
@@ -306,8 +316,7 @@ def main() -> int:
 
         if base in DISCRETE_STEP_SHOWS:
             holds = detect_color_holds(samples, args.skip_ms)
-            # Trim to one loop. The first hold may be a long
-            # post-byte blackout — don't count it in the loop budget.
+            # Firmware stream: trim to one loop's worth of holds.
             kept_holds = [h for h in holds
                           if h["t_mid_ms"] <= args.skip_ms + loop_ms]
             for h in kept_holds:
@@ -315,11 +324,19 @@ def main() -> int:
                 r, g, b = apply_ccm(M, obs_rgb)
                 show_entries.append(
                     (byte, int(h["t_mid_ms"]), r, g, b))
+            # Card stream: all detected holds across the full
+            # 90 s capture (multiple loop iterations included).
+            for h in holds:
+                obs_rgb = (h["r"], h["g"], h["b"])
+                r, g, b = apply_ccm(M, obs_rgb)
+                show_entries_full.append(
+                    (byte, int(h["t_mid_ms"]), r, g, b))
             show_summary.append(
                 (base, len(kept_holds), loop_ms, "step"))
         else:
             decimated = decimate(samples, args.interval_ms,
                                  args.skip_ms)
+            # Firmware stream: clip to one loop.
             loop_cutoff = args.skip_ms + loop_ms
             clipped = [s for s in decimated if s["t_ms"] <= loop_cutoff]
             for s in clipped:
@@ -327,6 +344,13 @@ def main() -> int:
                            int(s["rgb"][2]))
                 r, g, b = apply_ccm(M, obs_rgb)
                 show_entries.append(
+                    (byte, int(s["t_ms"]), r, g, b))
+            # Card stream: full decimated capture.
+            for s in decimated:
+                obs_rgb = (int(s["rgb"][0]), int(s["rgb"][1]),
+                           int(s["rgb"][2]))
+                r, g, b = apply_ccm(M, obs_rgb)
+                show_entries_full.append(
                     (byte, int(s["t_ms"]), r, g, b))
             show_summary.append(
                 (base, len(clipped), loop_ms, "decimated"))
@@ -445,7 +469,7 @@ def main() -> int:
     if args.card_out is not None:
         update_card_data_block(
             card_path=args.card_out,
-            show_entries=show_entries,
+            show_entries=show_entries_full,
             show_summary=show_summary,
             ambient_rgb=(ar, ag, ab),
         )
