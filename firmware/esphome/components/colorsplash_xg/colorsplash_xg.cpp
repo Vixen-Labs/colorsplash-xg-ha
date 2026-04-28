@@ -731,18 +731,36 @@ bool ColorSplashXG::color_preset_recall(const std::string &slug) {
       // card's wheel cursor + bulb tint + RGB label reflect the
       // recalled color. Deferred ~50ms so it doesn't race the
       // BLE dispatch sequence above. Only runs if setup_state
-      // captured the LightState pointer (always does on a
-      // properly-initialized bridge).
+      // captured the LightState pointer.
+      //
+      // Important: also force color_mode=RGB and state=on. In
+      // write_state's republish path the LightCall machinery had
+      // already set those before our lambda fires, but here we're
+      // outside any LightCall — remote_values still carries
+      // whatever the previous interaction left, which may be
+      // ON_OFF mode (in which case publish_state omits rgb_color
+      // from the pushed state and HA's attribute never updates).
       if (this->light_state_ != nullptr) {
         light::LightState *light = this->light_state_;
         const uint8_t pr = slot.r, pg = slot.g, pb = slot.b;
+        ESP_LOGI(TAG, "preset_republish: scheduling rgb=(%u,%u,%u) "
+                      "on LightState* %p",
+                 pr, pg, pb, static_cast<const void *>(light));
         App.scheduler.set_timeout(light, "preset_republish_rgb",
             50, [light, pr, pg, pb]() {
+          ESP_LOGI("colorsplash_xg",
+                   "preset_republish: firing rgb=(%u,%u,%u)",
+                   pr, pg, pb);
+          light->remote_values.set_state(true);
+          light->remote_values.set_color_mode(light::ColorMode::RGB);
           light->remote_values.set_red(pr / 255.0f);
           light->remote_values.set_green(pg / 255.0f);
           light->remote_values.set_blue(pb / 255.0f);
           light->publish_state();
         });
+      } else {
+        ESP_LOGW(TAG, "preset_republish: light_state_ is null, "
+                      "UI will not auto-update");
       }
       return true;
     }

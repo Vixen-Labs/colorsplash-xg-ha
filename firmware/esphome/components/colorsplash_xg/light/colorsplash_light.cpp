@@ -12,6 +12,16 @@ namespace colorsplash_xg {
 
 static const char *const TAG = "colorsplash_xg.light";
 
+void ColorSplashLightOutput::setup_state(light::LightState *state) {
+  ESP_LOGI(TAG, "setup_state: capturing LightState* %p for parent",
+           static_cast<const void *>(state));
+  if (this->parent_ != nullptr) {
+    this->parent_->set_light_state(state);
+  } else {
+    ESP_LOGW(TAG, "setup_state: parent_ is null, can't forward");
+  }
+}
+
 void ColorSplashLightOutput::write_state(light::LightState *state) {
   bool on;
   state->current_values_as_binary(&on);
