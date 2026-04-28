@@ -108,6 +108,29 @@ SHOW_LOOP_MS = {
 }
 DEFAULT_LOOP_MS = 30000
 
+# Card-side loop periods used by the timeline visualization.
+# Mostly mirrors SHOW_LOOP_MS, but a few values were re-measured
+# from the un-clipped 90 s capture by checking which period gives
+# the cleanest cycle closure (sample at activeStart matches
+# sample at activeStart + period). Northern Lights turned out to
+# have a fast ~5 s sub-cycle that the autocorrelation missed
+# during the original analysis; Tidal Wave's exact period is
+# slightly longer than the firmware's 32 s clip.
+#
+# These don't change the firmware picker's behavior — the
+# firmware uses SHOW_LOOP_MS above for its LUT clipping. They
+# only control the card's timeline strip width and click-mapping
+# range.
+CARD_SHOW_LOOP_MS = {
+    "Nova":              32000,  # cycle not fully resolved in capture
+    "Tidal Wave":        32400,  # was 32000, refined from un-clipped data
+    "Patriot Dream":     12200,
+    "Desert Skies":      32000,
+    "Northern Lights":    5200,  # was 30000 (DEFAULT) — fast sub-cycle
+    "Peruvian Paradise": 30000,  # capture too short to refine
+    "Super Nova":        32000,  # excluded from picker, keep parity with Nova
+}
+
 # Shows whose color sequence is discrete (no blending) and whose
 # hold durations are long enough to step-detect cleanly. For these,
 # the LUT stores one entry per color hold, with t_ms placed at the
@@ -508,14 +531,19 @@ def update_card_data_block(card_path: Path,
         lines.append(f"  [{byte},{t},{r},{g},{b}],")
     lines.append("];")
     lines.append("")
-    lines.append("// Per-show loop period in ms (used by the timeline ")
-    lines.append("// visualization to scale the strip's right edge).")
+    lines.append("// Per-show loop period in ms — drives the timeline ")
+    lines.append("// strip's right edge so the cycle closes back on its")
+    lines.append("// starting color. Sourced from CARD_SHOW_LOOP_MS")
+    lines.append("// (refined from the un-clipped capture), falling back")
+    lines.append("// to the firmware's SHOW_LOOP_MS / DEFAULT_LOOP_MS.")
     lines.append("const SHOW_LOOPS_MS = {")
-    for name, _n, loop_ms, _mode in show_summary:
+    for name, _n, _loop_ms, _mode in show_summary:
         byte = SHOW_BYTES.get(name)
         if byte is None:
             continue
-        lines.append(f"  {byte}: {loop_ms},  // {name}")
+        card_loop = CARD_SHOW_LOOP_MS.get(name,
+                       SHOW_LOOP_MS.get(name, DEFAULT_LOOP_MS))
+        lines.append(f"  {byte}: {card_loop},  // {name}")
     lines.append("};")
     lines.append(end_marker)
 

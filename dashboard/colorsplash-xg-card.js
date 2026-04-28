@@ -3986,13 +3986,16 @@ const SHOW_LUT_DATA = [
   [1,43712,1,205,20],
 ];
 
-// Per-show loop period in ms (used by the timeline 
-// visualization to scale the strip's right edge).
+// Per-show loop period in ms — drives the timeline 
+// strip's right edge so the cycle closes back on its
+// starting color. Sourced from CARD_SHOW_LOOP_MS
+// (refined from the un-clipped capture), falling back
+// to the firmware's SHOW_LOOP_MS / DEFAULT_LOOP_MS.
 const SHOW_LOOPS_MS = {
   7: 32000,  // Nova
-  2: 0,  // Super Nova
-  3: 30000,  // Northern Lights
-  4: 32000,  // Tidal Wave
+  2: 32000,  // Super Nova
+  3: 5200,  // Northern Lights
+  4: 32400,  // Tidal Wave
   5: 12200,  // Patriot Dream
   6: 32000,  // Desert Skies
   1: 30000,  // Peruvian Paradise
