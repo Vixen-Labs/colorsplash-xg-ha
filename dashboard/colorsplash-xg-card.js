@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -828,12 +828,25 @@ class ColorSplashCard extends HTMLElement {
       .save-preset-btn:active {
         transform: scale(0.99);
       }
-      /* User-saved preset swatches get a subtle dotted ring so
-         they're distinguishable from YAML-defined ones. */
+      /* User-saved preset swatches: a primary-color halo so they
+         read clearly against the YAML / built-in solid swatches.
+         Also a tiny bookmark badge in the corner to signal "you
+         can long-press / right-click to delete this one." */
       .swatch.preset.user {
-        box-shadow: 0 0 0 1px var(--divider-color,
-                                  rgba(127,127,127,0.45)),
-                    0 0 0 3px transparent;
+        box-shadow: 0 0 0 2px var(--primary-color, #03a9f4);
+      }
+      .swatch.preset.user::after {
+        content: "";
+        position: absolute;
+        top: -3px;
+        right: -3px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--primary-color, #03a9f4);
+        border: 2px solid var(--ha-card-background,
+                              var(--card-background-color, #1c1c1e));
+        pointer-events: none;
       }
 
       /* ─── Lock button ───────────────────────────────────── */
@@ -1008,12 +1021,20 @@ class ColorSplashCard extends HTMLElement {
                       style="background:${p.hex || "#444"};"></button>`;
     }).join("");
 
-    // "Save current as preset" button — visible when the light
-    // is on, the bridge has reported a recipe (i.e., the user
-    // recently picked a color from the wheel), and we have an
-    // rgb_color to swatch-color it.
-    const haveRecipe = !!this._readCurrentRecipe();
-    const canSave = isOn && haveRecipe && rgbColor && !hasEffect;
+    // "Save current as preset" button — shows when:
+    //   - light is on with an rgb_color
+    //   - the bridge has reported a recipe (picker has run)
+    //   - no show effect is active
+    //   - the current recipe doesn't already match a saved preset
+    //     (avoids double-saving the same recipe under a different
+    //     name; user wants the button to disappear post-save)
+    const recipe = this._readCurrentRecipe();
+    const haveRecipe = !!recipe;
+    const alreadySaved = recipe && this._allPresets().some((p) =>
+        p.start_byte === recipe.start_byte
+        && p.wait_ms === recipe.wait_ms);
+    const canSave = isOn && haveRecipe && rgbColor
+        && !hasEffect && !alreadySaved;
     const saveBtn = canSave ? `
       <button class="save-preset-btn" data-action="save-preset">
         <ha-icon icon="mdi:bookmark-plus-outline"></ha-icon>
@@ -1122,6 +1143,10 @@ class ColorSplashCard extends HTMLElement {
   // ---- event handling ----
 
   async _onClick(e) {
+    if (this._suppressNextClick) {
+      this._suppressNextClick = false;
+      return;
+    }
     const t = e.target.closest("[data-action]");
     if (!t) return;
     const action = t.dataset.action;
@@ -1201,17 +1226,43 @@ class ColorSplashCard extends HTMLElement {
       case "preset": {
         const idx = parseInt(t.dataset.presetIndex, 10);
         const p = this._allPresets()[idx];
+        console.info(
+            `[colorsplash-xg-card v${VERSION}] preset replay`,
+            {idx, preset: p, scrub_service: cfg.scrub_service});
         if (!p) {
           console.warn("preset index out of range", idx);
           break;
         }
-        const [domain, name] = cfg.scrub_service.split(".", 2);
-        await hass.callService(domain, name, {
+        // ESPHome service names contain dots in the form
+        // "esphome.<device_slug>_<service_name>". The first dot
+        // separates domain from service. Split with limit 2 picks
+        // ALL of the suffix into the second slot, even if it
+        // contains underscores.
+        const dotIdx = cfg.scrub_service.indexOf(".");
+        if (dotIdx < 0) {
+          console.warn("scrub_service missing '.': "
+                       + cfg.scrub_service);
+          break;
+        }
+        const domain = cfg.scrub_service.slice(0, dotIdx);
+        const name = cfg.scrub_service.slice(dotIdx + 1);
+        const args = {
           start_byte: p.start_byte | 0,
           wait_ms: p.wait_ms | 0,
-        });
-        await hass.callService("light", "turn_on",
-            {entity_id: cfg.light_entity, effect: "None"});
+        };
+        console.info("calling service", {domain, name, args});
+        try {
+          await hass.callService(domain, name, args);
+        } catch (err) {
+          console.error("scrub service call failed:", err);
+          break;
+        }
+        try {
+          await hass.callService("light", "turn_on",
+              {entity_id: cfg.light_entity, effect: "None"});
+        } catch (err) {
+          console.error("light.turn_on(effect:None) failed:", err);
+        }
         break;
       }
 
@@ -1268,38 +1319,34 @@ class ColorSplashCard extends HTMLElement {
     }
 
     // Long-press on a user preset swatch → confirm + delete.
-    // Don't intercept short clicks — those still fall through to
-    // the normal preset handler.
+    // Short taps fall through to the normal preset replay path
+    // (the click event bubbles up to shadowRoot's _onClick
+    // delegate). When a long-press fires the delete confirm, we
+    // set _suppressNextClick so the trailing click — which would
+    // otherwise replay the preset on its way out — is dropped.
     const userSwatches = this.shadowRoot.querySelectorAll(
         ".swatch.preset.user");
     userSwatches.forEach((sw) => {
       let pressTimer = null;
-      let longPressed = false;
-      sw.addEventListener("pointerdown", (e) => {
-        longPressed = false;
-        pressTimer = setTimeout(() => {
-          longPressed = true;
-          this._maybeDeletePreset(sw);
-        }, 600);
-      });
       const cancel = () => {
         if (pressTimer) clearTimeout(pressTimer);
         pressTimer = null;
       };
-      sw.addEventListener("pointerup", (e) => {
-        cancel();
-        if (longPressed) {
-          // Eat the trailing click so it doesn't fire the preset.
-          e.preventDefault();
-          e.stopPropagation();
-        }
+      sw.addEventListener("pointerdown", () => {
+        pressTimer = setTimeout(() => {
+          pressTimer = null;
+          this._suppressNextClick = true;
+          this._maybeDeletePreset(sw);
+        }, 600);
       });
-      sw.addEventListener("pointermove", cancel);
-      sw.addEventListener("pointerleave", cancel);
+      sw.addEventListener("pointerup",     cancel);
+      sw.addEventListener("pointermove",   cancel);
+      sw.addEventListener("pointerleave",  cancel);
       sw.addEventListener("pointercancel", cancel);
       sw.addEventListener("contextmenu", (e) => {
-        // Right-click on desktop → also open the delete prompt.
+        // Right-click on desktop also opens the delete prompt.
         e.preventDefault();
+        this._suppressNextClick = true;
         this._maybeDeletePreset(sw);
       });
     });
