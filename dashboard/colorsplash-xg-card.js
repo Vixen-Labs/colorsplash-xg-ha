@@ -3092,14 +3092,32 @@ class ColorSplashCard extends HTMLElement {
 
   // Resolve LUT samples + active range for a given show byte.
   // Returns {samples, loopMs, activeStart, activeEnd}. The active
-  // range crops the post-byte blackout (skip_ms in firmware) from
-  // the timeline display — only the actually-lit portion of the
-  // loop is shown. samples is empty for shows we don't have data
-  // for (Super Nova is excluded from the LUT).
+  // range crops the post-byte blackout from the timeline — and
+  // because the blackout duration varies per show (Nova holds
+  // ~5.5 s, Tidal Wave / Patriot Dream / etc. only ~2.5 s), we
+  // trim by RGB brightness rather than a fixed millisecond
+  // floor. Any leading sample whose max(r,g,b) is below
+  // LIT_THRESHOLD is treated as part of the AC-interrupt
+  // blackout and dropped from the active range.
+  //
+  // samples is the LIT portion only (passed to _timelineGradient
+  // so the strip never renders the dark ramp-in). activeStart /
+  // activeEnd are the t_ms bounds of that lit portion — used by
+  // the marker + click handler.
   _showLutFor(byte) {
-    const samples = SHOW_LUT_DATA.filter((row) => row[0] === byte);
+    const all = SHOW_LUT_DATA.filter((row) => row[0] === byte);
     let loopMs = SHOW_LOOPS_MS[byte] | 0;
     if (loopMs <= 0) loopMs = 30000;
+    const LIT_THRESHOLD = 20;  // RGB channel max above blackout floor
+    let firstLitIdx = 0;
+    while (firstLitIdx < all.length) {
+      const [, , r, g, b] = all[firstLitIdx];
+      if (Math.max(r, g, b) > LIT_THRESHOLD) break;
+      firstLitIdx++;
+    }
+    const samples = (firstLitIdx < all.length)
+        ? all.slice(firstLitIdx)
+        : all;  // all-dark fallback — keep full set so strip renders
     const activeStart = samples.length ? samples[0][1] : 0;
     const activeEnd = samples.length
         ? samples[samples.length - 1][1] : loopMs;
