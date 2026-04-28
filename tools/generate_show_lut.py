@@ -108,6 +108,29 @@ SHOW_LOOP_MS = {
 }
 DEFAULT_LOOP_MS = 30000
 
+# Card-side loop periods used by the timeline visualization.
+# Mostly mirrors SHOW_LOOP_MS, but a few values were re-measured
+# from the un-clipped 90 s capture by checking which period gives
+# the cleanest cycle closure (sample at activeStart matches
+# sample at activeStart + period). Northern Lights turned out to
+# have a fast ~5 s sub-cycle that the autocorrelation missed
+# during the original analysis; Tidal Wave's exact period is
+# slightly longer than the firmware's 32 s clip.
+#
+# These don't change the firmware picker's behavior — the
+# firmware uses SHOW_LOOP_MS above for its LUT clipping. They
+# only control the card's timeline strip width and click-mapping
+# range.
+CARD_SHOW_LOOP_MS = {
+    "Nova":              32000,  # cycle not fully resolved in capture
+    "Tidal Wave":        32400,  # was 32000, refined from un-clipped data
+    "Patriot Dream":     12200,
+    "Desert Skies":      32000,
+    "Northern Lights":    5200,  # was 30000 (DEFAULT) — fast sub-cycle
+    "Peruvian Paradise": 30000,  # capture too short to refine
+    "Super Nova":        32000,  # excluded from picker, keep parity with Nova
+}
+
 # Shows whose color sequence is discrete (no blending) and whose
 # hold durations are long enough to step-detect cleanly. For these,
 # the LUT stores one entry per color hold, with t_ms placed at the
@@ -246,6 +269,12 @@ def main() -> int:
     p.add_argument("--in", dest="inp",
                    default="tools/show_colors_video.json", type=Path)
     p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--card-out", type=Path, default=None,
+                   help="optional: also rewrite the SHOW_LUT_DATA "
+                        "block in dashboard/colorsplash-xg-card.js "
+                        "between the auto-gen marker comments so "
+                        "the JS card has the same data the firmware "
+                        "uses for the timeline visualization (#56)")
     p.add_argument("--interval-ms", type=int, default=100,
                    help="decimation interval (default 100 — one "
                         "sample every 100 ms per show)")
@@ -286,7 +315,17 @@ def main() -> int:
     # Shows in LUT_EXCLUDE_SHOWS are skipped entirely (the named
     # effect still works in HA — only the picker's matching pool
     # excludes them).
+    #
+    # Two output streams:
+    # - show_entries: loop-clipped, written to firmware.h. Keeps
+    #   the picker's max wait bounded by one loop period.
+    # - show_entries_full: un-clipped, written to the card.js.
+    #   The card's timeline visualization needs a clean loop
+    #   window (which can fall in loop iteration 1, 2, or 3
+    #   depending on where first-lit lands), so it benefits from
+    #   the full ~90 s capture per show.
     show_entries: list[tuple[int, int, int, int, int]] = []
+    show_entries_full: list[tuple[int, int, int, int, int]] = []
     show_summary: list[tuple[str, int, int, str]] = []
     for show_name, samples in data.get("shows", {}).items():
         base = show_name.split(" #")[0]
@@ -300,8 +339,7 @@ def main() -> int:
 
         if base in DISCRETE_STEP_SHOWS:
             holds = detect_color_holds(samples, args.skip_ms)
-            # Trim to one loop. The first hold may be a long
-            # post-byte blackout — don't count it in the loop budget.
+            # Firmware stream: trim to one loop's worth of holds.
             kept_holds = [h for h in holds
                           if h["t_mid_ms"] <= args.skip_ms + loop_ms]
             for h in kept_holds:
@@ -309,11 +347,19 @@ def main() -> int:
                 r, g, b = apply_ccm(M, obs_rgb)
                 show_entries.append(
                     (byte, int(h["t_mid_ms"]), r, g, b))
+            # Card stream: all detected holds across the full
+            # 90 s capture (multiple loop iterations included).
+            for h in holds:
+                obs_rgb = (h["r"], h["g"], h["b"])
+                r, g, b = apply_ccm(M, obs_rgb)
+                show_entries_full.append(
+                    (byte, int(h["t_mid_ms"]), r, g, b))
             show_summary.append(
                 (base, len(kept_holds), loop_ms, "step"))
         else:
             decimated = decimate(samples, args.interval_ms,
                                  args.skip_ms)
+            # Firmware stream: clip to one loop.
             loop_cutoff = args.skip_ms + loop_ms
             clipped = [s for s in decimated if s["t_ms"] <= loop_cutoff]
             for s in clipped:
@@ -321,6 +367,13 @@ def main() -> int:
                            int(s["rgb"][2]))
                 r, g, b = apply_ccm(M, obs_rgb)
                 show_entries.append(
+                    (byte, int(s["t_ms"]), r, g, b))
+            # Card stream: full decimated capture.
+            for s in decimated:
+                obs_rgb = (int(s["rgb"][0]), int(s["rgb"][1]),
+                           int(s["rgb"][2]))
+                r, g, b = apply_ccm(M, obs_rgb)
+                show_entries_full.append(
                     (byte, int(s["t_ms"]), r, g, b))
             show_summary.append(
                 (base, len(clipped), loop_ms, "decimated"))
@@ -435,7 +488,73 @@ def main() -> int:
     print(f">>> wrote {args.out} ({sz} bytes, "
           f"{len(show_entries)} show samples + "
           f"{len(solid_entries)} solids)")
+
+    if args.card_out is not None:
+        update_card_data_block(
+            card_path=args.card_out,
+            show_entries=show_entries_full,
+            show_summary=show_summary,
+            ambient_rgb=(ar, ag, ab),
+        )
+
     return 0
+
+
+def update_card_data_block(card_path: Path,
+                           show_entries: list,
+                           show_summary: list,
+                           ambient_rgb: tuple) -> None:
+    """Rewrite the SHOW_LUT_DATA block inside the JS card file
+    between the auto-gen marker comments. Single Lovelace
+    resource, no extra registration needed by the user."""
+    if not card_path.exists():
+        print(f">>> WARN: --card-out {card_path} not found; "
+              "skipping card-side data write.")
+        return
+    src = card_path.read_text()
+    begin_marker = "// === SHOW_LUT_DATA BEGIN (auto-generated by tools/generate_show_lut.py) ==="
+    end_marker = "// === SHOW_LUT_DATA END ==="
+    if begin_marker not in src or end_marker not in src:
+        print(f">>> WARN: marker comments not found in "
+              f"{card_path} — add the begin/end markers to enable "
+              "card-side data injection.")
+        return
+
+    # Build the JS block. Compact array-of-arrays per row keeps
+    # the bundle small (~30 KB at current sample count).
+    lines = [begin_marker,
+             "// Auto-generated by tools/generate_show_lut.py — do not edit by hand.",
+             "// Each row: [start_byte, t_ms, r, g, b]. start_byte identifies",
+             "// the show; t_ms is the sample's offset from the show's send byte.",
+             "const SHOW_LUT_DATA = ["]
+    for byte, t, r, g, b in show_entries:
+        lines.append(f"  [{byte},{t},{r},{g},{b}],")
+    lines.append("];")
+    lines.append("")
+    lines.append("// Per-show loop period in ms — drives the timeline ")
+    lines.append("// strip's right edge so the cycle closes back on its")
+    lines.append("// starting color. Sourced from CARD_SHOW_LOOP_MS")
+    lines.append("// (refined from the un-clipped capture), falling back")
+    lines.append("// to the firmware's SHOW_LOOP_MS / DEFAULT_LOOP_MS.")
+    lines.append("const SHOW_LOOPS_MS = {")
+    for name, _n, _loop_ms, _mode in show_summary:
+        byte = SHOW_BYTES.get(name)
+        if byte is None:
+            continue
+        card_loop = CARD_SHOW_LOOP_MS.get(name,
+                       SHOW_LOOP_MS.get(name, DEFAULT_LOOP_MS))
+        lines.append(f"  {byte}: {card_loop},  // {name}")
+    lines.append("};")
+    lines.append(end_marker)
+
+    new_block = "\n".join(lines)
+    pre, _, after_begin = src.partition(begin_marker)
+    _, _, post = after_begin.partition(end_marker)
+    rewritten = pre + new_block + post
+    card_path.write_text(rewritten)
+    print(f">>> updated SHOW_LUT_DATA block in {card_path} "
+          f"({len(show_entries)} samples, "
+          f"{rewritten.encode('utf-8').__len__()} bytes total)")
 
 
 if __name__ == "__main__":
