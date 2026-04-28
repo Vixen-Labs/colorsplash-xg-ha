@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.5";
+const VERSION = "0.9.6";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -1034,13 +1034,35 @@ class ColorSplashCard extends HTMLElement {
       .modal-row.tight {
         gap: 6px;
       }
+      .modal-swatch-label {
+        position: relative;
+        flex: 0 0 auto;
+        cursor: pointer;
+      }
       .modal-swatch {
         width: 56px;
         height: 56px;
         border-radius: 50%;
         border: 1px solid var(--divider-color,
                               rgba(127,127,127,0.4));
-        flex: 0 0 auto;
+      }
+      /* Hide the native color input but keep it overlapping the
+         swatch so a click on the swatch opens the OS color
+         picker. */
+      .modal-swatch-label input[type="color"] {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+        border: none;
+        background: transparent;
+        padding: 0;
+      }
+      .modal-hint-small {
+        font-size: 0.75em;
+        color: var(--secondary-text-color, #a0a0a0);
+        line-height: 1.4;
+        margin-top: 4px;
       }
       .modal-meta {
         flex: 1 1 auto;
@@ -1447,12 +1469,21 @@ class ColorSplashCard extends HTMLElement {
 
           <div class="modal-body">
             <div class="modal-row">
-              <div class="modal-swatch"
-                   style="background:${draft.hex};">
-              </div>
+              <label class="modal-swatch-label"
+                     title="Click to refine the swatch color">
+                <div class="modal-swatch"
+                     style="background:${draft.hex};">
+                </div>
+                <input type="color" name="hex"
+                       value="${draft.hex}" />
+              </label>
               <div class="modal-meta">
                 <div class="modal-hex">${draft.hex.toUpperCase()}</div>
                 <div class="modal-show">Show: ${showName}</div>
+                <div class="modal-hint-small">
+                  Tap the swatch to refine the preview color.
+                  The recipe (show + timing) doesn't change.
+                </div>
               </div>
             </div>
 
@@ -1898,6 +1929,21 @@ class ColorSplashCard extends HTMLElement {
           this._editDraft.wait_ms =
               Math.max(0, parseInt(e.target.value, 10) | 0);
         }
+      });
+    }
+    const hexInput = this.shadowRoot.querySelector(
+        ".edit-modal input[name=hex]");
+    if (hexInput && this._editDraft) {
+      hexInput.addEventListener("input", (e) => {
+        if (!this._editDraft) return;
+        const v = e.target.value;
+        this._editDraft.hex = v;
+        // Live-update the swatch background and hex label without
+        // a full re-render (which would close the OS picker).
+        const sw = this.shadowRoot.querySelector(".modal-swatch");
+        if (sw) sw.style.background = v;
+        const lbl = this.shadowRoot.querySelector(".modal-hex");
+        if (lbl) lbl.textContent = v.toUpperCase();
       });
     }
     const slugInput = this.shadowRoot.querySelector(
