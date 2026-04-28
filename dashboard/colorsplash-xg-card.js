@@ -3166,9 +3166,22 @@ class ColorSplashCard extends HTMLElement {
     const tToPct = (t) => Math.max(0, Math.min(100,
         ((t - activeStart) / span) * 100));
 
+    // Loop-closure: where the captured samples don't reach the
+    // right edge of the loop period (LUT decimation cuts at
+    // skip_ms+loop_ms, so we're typically missing the few
+    // seconds of the show that play before the post-AC-blackout
+    // first-lit moment), interpolate / band the tail back to the
+    // FIRST sample's color. The cycle visibly closes — left edge
+    // and right edge match — which both suggests the loop
+    // structure and gives the user a hint of what's happening
+    // through the data gap. Until the recapture (#55) lands more
+    // complete data, this is the best signal we can offer.
+    const first = samples[0];
+
     if (DISCRETE_BAND_BYTES.has(byte)) {
       // Hard-edged bands — one per sample, edges at midpoints.
       const stops = [];
+      const lastIdx = samples.length - 1;
       for (let i = 0; i < samples.length; i++) {
         const t = samples[i][1];
         const r = samples[i][2], g = samples[i][3],
@@ -3176,21 +3189,32 @@ class ColorSplashCard extends HTMLElement {
         const left_t = (i === 0)
             ? activeStart
             : (samples[i - 1][1] + t) / 2;
-        const right_t = (i === samples.length - 1)
-            ? activeEnd
+        const right_t = (i === lastIdx)
+            ? t  // stop AT the last sample's t_ms; tail band follows
             : (t + samples[i + 1][1]) / 2;
         const leftPct = tToPct(left_t).toFixed(2);
         const rightPct = tToPct(right_t).toFixed(2);
         stops.push(`rgb(${r},${g},${b}) ${leftPct}%`);
         stops.push(`rgb(${r},${g},${b}) ${rightPct}%`);
       }
+      // Loop-closure band: from the last sample's t_ms out to
+      // 100%, painted with the FIRST sample's color so the strip
+      // visually wraps to the start of the cycle.
+      if (samples.length) {
+        const lastT = samples[lastIdx][1];
+        const closeStartPct = tToPct(lastT).toFixed(2);
+        stops.push(
+            `rgb(${first[2]},${first[3]},${first[4]}) ${closeStartPct}%`);
+        stops.push(
+            `rgb(${first[2]},${first[3]},${first[4]}) 100%`);
+      }
       return `linear-gradient(to right, ${stops.join(", ")})`;
     }
 
     // Smooth-blend default: one stop per sample at its t_ms pct.
-    // Add a flat-color tail at 100% if the last captured sample
-    // doesn't reach the right edge of the loop (keeps the strip
-    // from showing an extrapolated artifact past the LUT cutoff).
+    // Add a closing stop at 100% with the FIRST sample's color so
+    // the gradient interpolates the tail back into the cycle's
+    // starting color — visually closes the loop.
     const stops = samples.map(([_byte, t, r, g, b]) => {
       const pct = tToPct(t).toFixed(2);
       return `rgb(${r},${g},${b}) ${pct}%`;
@@ -3198,7 +3222,7 @@ class ColorSplashCard extends HTMLElement {
     const last = samples[samples.length - 1];
     const lastPct = tToPct(last[1]);
     if (lastPct < 99.5) {
-      stops.push(`rgb(${last[2]},${last[3]},${last[4]}) 100%`);
+      stops.push(`rgb(${first[2]},${first[3]},${first[4]}) 100%`);
     }
     return `linear-gradient(to right, ${stops.join(", ")})`;
   }
