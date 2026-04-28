@@ -3119,8 +3119,13 @@ class ColorSplashCard extends HTMLElement {
         ? all.slice(firstLitIdx)
         : all;  // all-dark fallback — keep full set so strip renders
     const activeStart = samples.length ? samples[0][1] : 0;
-    const activeEnd = samples.length
-        ? samples[samples.length - 1][1] : loopMs;
+    // Strip spans exactly ONE LOOP starting from the first lit
+    // moment, so the user sees a complete cycle. The captured
+    // samples may not reach activeStart + loopMs (LUT decimation
+    // clips at skip_ms + loop_ms, and step-detection only
+    // captures hold midpoints) — the timeline-gradient renderer
+    // extends the last sample's color out to the right edge.
+    const activeEnd = activeStart + loopMs;
     return {samples, loopMs, activeStart, activeEnd};
   }
 
@@ -3183,10 +3188,18 @@ class ColorSplashCard extends HTMLElement {
     }
 
     // Smooth-blend default: one stop per sample at its t_ms pct.
+    // Add a flat-color tail at 100% if the last captured sample
+    // doesn't reach the right edge of the loop (keeps the strip
+    // from showing an extrapolated artifact past the LUT cutoff).
     const stops = samples.map(([_byte, t, r, g, b]) => {
       const pct = tToPct(t).toFixed(2);
       return `rgb(${r},${g},${b}) ${pct}%`;
     });
+    const last = samples[samples.length - 1];
+    const lastPct = tToPct(last[1]);
+    if (lastPct < 99.5) {
+      stops.push(`rgb(${last[2]},${last[3]},${last[4]}) 100%`);
+    }
     return `linear-gradient(to right, ${stops.join(", ")})`;
   }
 
