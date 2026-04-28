@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.6";
+const VERSION = "0.9.7";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -143,6 +143,13 @@ const COLOR_NAME_REFS = [
   ["#5fa8c4","Pool Cyan"],
   ["#a0522d","Sienna"],    ["#8b4513","Saddle Brown"],
 ];
+
+// Auto-test fire on every preset-edit nudge — debounce so a
+// burst of ±10/±100 taps fires the recipe only once when the
+// user settles. Same idea as the wheel/slider commit debounce
+// but with its own timer so the picker's own commits don't
+// accidentally cancel a pending edit-modal test.
+const TEST_FIRE_DEBOUNCE_MS = 600;
 
 const WHEEL_SIZE = 220;       // px — outer diameter of the HSV wheel
 const SLIDER_WIDTH = 100;     // px — vertical slider thickness
@@ -306,6 +313,10 @@ class ColorSplashCard extends HTMLElement {
     this._effectsOpen = false;
     this._wheelDragging = false;
     this._brightnessDragging = false;
+    // Edit-modal time-format mode: "ms" (default) or "s". Lives
+    // on the instance so toggling persists across re-renders.
+    this._timeFormat = "ms";
+    this._pendingTestFireTimer = null;
     this._wheelCursor = null;  // {hue, sat} or null
     // Last (h, s) the user picked from the wheel — kept so a
     // brightness drag re-emits the same hue with the new V.
@@ -1097,6 +1108,39 @@ class ColorSplashCard extends HTMLElement {
       .modal-label input[name="slug"] {
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
       }
+      .modal-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .modal-format-toggle {
+        background: var(--secondary-background-color, #2c2c2e);
+        color: var(--primary-text-color, #fff);
+        border: 1px solid var(--divider-color,
+                              rgba(127,127,127,0.35));
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: 0.78em;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        cursor: pointer;
+        min-width: 32px;
+      }
+      /* Tight nudge row wraps to two lines on narrow modals so
+         the input stays usable. */
+      .modal-nudges {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .modal-nudges input[type="number"] {
+        flex: 1 1 90px;
+        min-width: 0;
+      }
+      .modal-nudges button {
+        font-size: 0.85em;
+        padding: 6px 8px;
+        min-width: 38px;
+      }
       .modal-hint {
         font-size: 0.78em;
         color: var(--secondary-text-color, #a0a0a0);
@@ -1506,15 +1550,31 @@ class ColorSplashCard extends HTMLElement {
             </label>
 
             <label class="modal-label">
-              Time offset (ms)
-              <div class="modal-row tight">
+              <span class="modal-label-row">
+                <span>Time offset</span>
+                <button class="modal-format-toggle"
+                        data-action="edit-preset-toggle-format"
+                        title="Toggle between milliseconds and seconds">
+                  ${this._timeFormat}
+                </button>
+              </span>
+              <div class="modal-row tight modal-nudges">
+                <button data-action="edit-preset-nudge"
+                        data-delta-ms="-1000">−1s</button>
                 <button data-action="edit-preset-nudge"
                         data-delta-ms="-100">−100</button>
+                <button data-action="edit-preset-nudge"
+                        data-delta-ms="-10">−10</button>
                 <input type="number" name="wait_ms"
-                       min="0" step="100"
-                       value="${draft.wait_ms}" />
+                       min="0"
+                       step="${this._timeFormat === 's' ? '0.001' : '100'}"
+                       value="${this._formatWaitMs(draft.wait_ms)}" />
+                <button data-action="edit-preset-nudge"
+                        data-delta-ms="10">+10</button>
                 <button data-action="edit-preset-nudge"
                         data-delta-ms="100">+100</button>
+                <button data-action="edit-preset-nudge"
+                        data-delta-ms="1000">+1s</button>
               </div>
             </label>
 
@@ -1539,6 +1599,51 @@ class ColorSplashCard extends HTMLElement {
           </div>
         </div>
       </div>`;
+  }
+
+  // Schedule a test-fire of the current edit-modal draft's
+  // recipe ~600 ms after the last interaction. Lets the user
+  // tap a series of nudge buttons (or type into the wait_ms
+  // input) and have the fixture chase only once they stop.
+  // Skips firing for solid-byte recipes (wait_ms === 0) — the
+  // bridge interprets those as instant solids, no scrub needed.
+  _scheduleTestFire() {
+    if (this._pendingTestFireTimer) {
+      clearTimeout(this._pendingTestFireTimer);
+    }
+    this._pendingTestFireTimer = setTimeout(() => {
+      this._pendingTestFireTimer = null;
+      const d = this._editDraft;
+      if (!d || !this._hass) return;
+      if ((d.wait_ms | 0) === 0) return;
+      this._callService(this._config.scrub_service, {
+        start_byte: d.start_byte | 0,
+        wait_ms: d.wait_ms | 0,
+      }).catch((err) =>
+          console.warn("[colorsplash-xg-card] auto test-fire "
+              + "skipped:", err));
+    }, TEST_FIRE_DEBOUNCE_MS);
+  }
+
+  // Format wait_ms for the input field per current _timeFormat.
+  _formatWaitMs(ms) {
+    if (this._timeFormat === "s") {
+      return (ms / 1000).toFixed(3);
+    }
+    return String(ms | 0);
+  }
+
+  // Inverse of _formatWaitMs: parse the input field's raw value
+  // back to integer milliseconds, clamping invalid input to 0.
+  _parseWaitInput(raw) {
+    if (this._timeFormat === "s") {
+      const v = parseFloat(raw);
+      if (!Number.isFinite(v)) return 0;
+      return Math.max(0, Math.round(v * 1000));
+    }
+    const v = parseInt(raw, 10);
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(0, v);
   }
 
   _showNameForByte(byte) {
@@ -1724,6 +1829,10 @@ class ColorSplashCard extends HTMLElement {
       }
 
       case "edit-preset-cancel": {
+        if (this._pendingTestFireTimer) {
+          clearTimeout(this._pendingTestFireTimer);
+          this._pendingTestFireTimer = null;
+        }
         this._editingSlug = null;
         this._editDraft = null;
         this._lastRenderedKey = "";
@@ -1738,8 +1847,6 @@ class ColorSplashCard extends HTMLElement {
             ".edit-modal input[name=slug]");
         const nameInput = this.shadowRoot.querySelector(
             ".edit-modal input[name=name]");
-        const waitInput = this.shadowRoot.querySelector(
-            ".edit-modal input[name=wait_ms]");
         let newSlug = slugInput
             ? this._sanitizeSlug(slugInput.value)
             : d.slug;
@@ -1747,9 +1854,9 @@ class ColorSplashCard extends HTMLElement {
         const newName = nameInput
             ? String(nameInput.value).slice(0, 31)
             : d.name;
-        const newWaitMs = waitInput
-            ? Math.max(0, parseInt(waitInput.value, 10) | 0)
-            : d.wait_ms;
+        // wait_ms is kept in sync via the input event listener
+        // (which honors _timeFormat), so use the draft directly.
+        const newWaitMs = Math.max(0, d.wait_ms | 0);
         const [er, eg, eb] = hexToRgb(d.hex);
         // Save (or overwrite) under the current slug.
         try {
@@ -1804,17 +1911,18 @@ class ColorSplashCard extends HTMLElement {
       case "edit-preset-test": {
         if (!this._editDraft) break;
         // Fire the (possibly tweaked) recipe via pool_scrub
-        // without persisting the changes — lets the user verify
-        // the timing nudge before saving.
-        const waitInput = this.shadowRoot.querySelector(
-            ".edit-modal input[name=wait_ms]");
-        const tryWaitMs = waitInput
-            ? Math.max(0, parseInt(waitInput.value, 10) | 0)
-            : this._editDraft.wait_ms;
+        // without persisting the changes. Cancel any pending
+        // auto-test so this manual fire doesn't get followed by
+        // a duplicate.
+        if (this._pendingTestFireTimer) {
+          clearTimeout(this._pendingTestFireTimer);
+          this._pendingTestFireTimer = null;
+        }
+        const d = this._editDraft;
         try {
           await this._callService(cfg.scrub_service, {
-            start_byte: this._editDraft.start_byte,
-            wait_ms: tryWaitMs,
+            start_byte: d.start_byte,
+            wait_ms: d.wait_ms | 0,
           });
         } catch (err) {
           console.error("test-fire pool_scrub failed:", err);
@@ -1823,13 +1931,31 @@ class ColorSplashCard extends HTMLElement {
       }
 
       case "edit-preset-nudge": {
+        if (!this._editDraft) break;
         const delta = parseInt(t.dataset.deltaMs, 10) | 0;
+        const next = Math.max(0,
+            (this._editDraft.wait_ms | 0) + delta);
+        this._editDraft.wait_ms = next;
         const waitInput = this.shadowRoot.querySelector(
             ".edit-modal input[name=wait_ms]");
-        if (!waitInput) break;
-        const next = Math.max(0,
-            (parseInt(waitInput.value, 10) | 0) + delta);
-        waitInput.value = String(next);
+        if (waitInput) waitInput.value = this._formatWaitMs(next);
+        this._scheduleTestFire();
+        break;
+      }
+
+      case "edit-preset-toggle-format": {
+        if (!this._editDraft) break;
+        this._timeFormat = this._timeFormat === "ms" ? "s" : "ms";
+        const waitInput = this.shadowRoot.querySelector(
+            ".edit-modal input[name=wait_ms]");
+        if (waitInput) {
+          waitInput.value =
+              this._formatWaitMs(this._editDraft.wait_ms);
+          waitInput.step = this._timeFormat === "s" ? "0.001" : "100";
+        }
+        const toggleBtn = this.shadowRoot.querySelector(
+            "[data-action=edit-preset-toggle-format]");
+        if (toggleBtn) toggleBtn.textContent = this._timeFormat;
         break;
       }
     }
@@ -1925,10 +2051,10 @@ class ColorSplashCard extends HTMLElement {
         ".edit-modal input[name=wait_ms]");
     if (waitInput && this._editDraft) {
       waitInput.addEventListener("input", (e) => {
-        if (this._editDraft) {
-          this._editDraft.wait_ms =
-              Math.max(0, parseInt(e.target.value, 10) | 0);
-        }
+        if (!this._editDraft) return;
+        this._editDraft.wait_ms =
+            this._parseWaitInput(e.target.value);
+        this._scheduleTestFire();
       });
     }
     const hexInput = this.shadowRoot.querySelector(
