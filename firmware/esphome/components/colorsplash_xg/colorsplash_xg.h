@@ -41,7 +41,7 @@ constexpr uint16_t CCCD_UUID_U16 = 0x2902;
 // querying the original RGB target.
 constexpr size_t MAX_COLOR_PRESETS = 20;
 struct ColorPreset {
-  char     slug[16];   // automation-addressable id [a-z0-9_]
+  char     slug[16];   // automation-addressable id [a-z0-9_-]
   char     name[32];   // human display label
   uint8_t  r, g, b;    // hex preview color
   uint8_t  start_byte; // pool_scrub recipe — fixture byte

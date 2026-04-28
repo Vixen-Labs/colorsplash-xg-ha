@@ -608,7 +608,8 @@ bool is_valid_preset_slug(const std::string &s) {
   for (char c : s) {
     if (!((c >= 'a' && c <= 'z')
           || (c >= '0' && c <= '9')
-          || c == '_')) {
+          || c == '_'
+          || c == '-')) {
       return false;
     }
   }

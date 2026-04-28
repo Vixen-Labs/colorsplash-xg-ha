@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.2";
+const VERSION = "0.9.3";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -1072,6 +1072,20 @@ class ColorSplashCard extends HTMLElement {
         font-family: inherit;
         width: 100%;
       }
+      .modal-label input[name="slug"] {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      .modal-hint {
+        font-size: 0.78em;
+        color: var(--secondary-text-color, #a0a0a0);
+        line-height: 1.4;
+      }
+      .modal-hint code {
+        background: var(--secondary-background-color, #2c2c2e);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 0.95em;
+      }
       .modal-row.tight input[type="number"] {
         flex: 1 1 auto;
         text-align: center;
@@ -1436,7 +1450,6 @@ class ColorSplashCard extends HTMLElement {
               <div class="modal-meta">
                 <div class="modal-hex">${draft.hex.toUpperCase()}</div>
                 <div class="modal-show">Show: ${showName}</div>
-                <div class="modal-slug">Slug: ${draft.slug}</div>
               </div>
             </div>
 
@@ -1444,6 +1457,18 @@ class ColorSplashCard extends HTMLElement {
               Name
               <input type="text" name="name" maxlength="31"
                      value="${draft.name.replace(/"/g, "&quot;")}" />
+            </label>
+
+            <label class="modal-label">
+              Slug
+              <input type="text" name="slug" maxlength="15"
+                     spellcheck="false" autocapitalize="none"
+                     value="${draft.slug}" />
+              <span class="modal-hint">
+                Used by HA automations:
+                <code>color_preset_recall(slug: ${draft.slug})</code>.
+                Lowercase a-z, 0-9, underscore or hyphen.
+              </span>
             </label>
 
             <label class="modal-label">
@@ -1643,10 +1668,16 @@ class ColorSplashCard extends HTMLElement {
           break;
         }
         // Open the edit modal pointing at the just-saved preset
-        // so the user can rename or tweak the timing immediately.
+        // so the user can rename, retag the slug, or tweak the
+        // timing immediately. original_slug captures what's
+        // currently in NVS — if the user edits the slug, save
+        // will write the new one and delete the old.
         this._editingSlug = slug;
         this._editDraft = {
-          slug, name: suggested, hex,
+          slug,
+          original_slug: slug,
+          name: suggested,
+          hex,
           start_byte: recipe.start_byte,
           wait_ms: recipe.wait_ms,
         };
@@ -1666,10 +1697,16 @@ class ColorSplashCard extends HTMLElement {
       case "edit-preset-save": {
         if (!this._editDraft) break;
         const d = this._editDraft;
+        const slugInput = this.shadowRoot.querySelector(
+            ".edit-modal input[name=slug]");
         const nameInput = this.shadowRoot.querySelector(
             ".edit-modal input[name=name]");
         const waitInput = this.shadowRoot.querySelector(
             ".edit-modal input[name=wait_ms]");
+        let newSlug = slugInput
+            ? this._sanitizeSlug(slugInput.value)
+            : d.slug;
+        if (!newSlug) newSlug = d.original_slug || d.slug;
         const newName = nameInput
             ? String(nameInput.value).slice(0, 31)
             : d.name;
@@ -1677,9 +1714,10 @@ class ColorSplashCard extends HTMLElement {
             ? Math.max(0, parseInt(waitInput.value, 10) | 0)
             : d.wait_ms;
         const [er, eg, eb] = hexToRgb(d.hex);
+        // Save (or overwrite) under the current slug.
         try {
           await this._callService(cfg.preset_save_service, {
-            slug: d.slug,
+            slug: newSlug,
             name: newName,
             red: er, green: eg, blue: eb,
             start_byte: d.start_byte,
@@ -1688,6 +1726,17 @@ class ColorSplashCard extends HTMLElement {
         } catch (err) {
           console.error("color_preset_save (edit) failed:", err);
           break;
+        }
+        // If the slug was renamed, drop the old slot. Saving
+        // first means we never lose the preset if delete fails.
+        if (d.original_slug && d.original_slug !== newSlug) {
+          try {
+            await this._callService(cfg.preset_delete_service,
+                                    {slug: d.original_slug});
+          } catch (err) {
+            console.warn("rename — could not delete old slug "
+                         + d.original_slug, err);
+          }
         }
         this._editingSlug = null;
         this._editDraft = null;
@@ -1833,6 +1882,29 @@ class ColorSplashCard extends HTMLElement {
         }
       });
     }
+    const slugInput = this.shadowRoot.querySelector(
+        ".edit-modal input[name=slug]");
+    if (slugInput && this._editDraft) {
+      slugInput.addEventListener("input", (e) => {
+        // Live-sanitize: lowercase + [a-z0-9_-], <= 15 chars.
+        // Preserve caret position when stripping disallowed
+        // characters so the user's typing experience stays
+        // smooth even with arrow / mid-string edits.
+        const before = e.target.value;
+        const caret = e.target.selectionStart;
+        const after = this._sanitizeSlug(before);
+        if (after !== before) {
+          e.target.value = after;
+          const newCaret = Math.min(caret || 0, after.length);
+          try {
+            e.target.setSelectionRange(newCaret, newCaret);
+          } catch (_) { /* not all input types support it */ }
+        }
+        if (this._editDraft) {
+          this._editDraft.slug = after;
+        }
+      });
+    }
   }
 
   _openEditModalForSwatch(sw) {
@@ -1841,14 +1913,25 @@ class ColorSplashCard extends HTMLElement {
     if (!p || !p._user || !p.slug) return;
     this._editingSlug = p.slug;
     this._editDraft = {
-      slug: p.slug,
-      name: p.name || "",
-      hex: p.hex || "#444",
-      start_byte: p.start_byte | 0,
-      wait_ms: p.wait_ms | 0,
+      slug:           p.slug,
+      original_slug:  p.slug,    // for rename-then-delete-old logic
+      name:           p.name || "",
+      hex:            p.hex || "#444",
+      start_byte:     p.start_byte | 0,
+      wait_ms:        p.wait_ms | 0,
     };
     this._lastRenderedKey = "";
     this._render();
+  }
+
+  // Sanitize a slug to the allowed character set: lowercase
+  // alphanumeric, underscore, hyphen. Used both by the live
+  // input handler and by the auto-suggest path.
+  _sanitizeSlug(raw) {
+    return String(raw || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "")
+        .slice(0, 15);
   }
 
   // Returns the current V (0..1) for any new outgoing color.
