@@ -147,6 +147,50 @@
         green: 130
         blue: 50
 
+# ─── User color presets (issue #53) ─────────────────────────────────
+# Presets saved via the JS card's "Save current color as preset…"
+# flow live in the bridge's NVS, addressable by their slug. Each
+# preset stores the underlying (start_byte, wait_ms) recipe — replay
+# fires the exact same byte sequence as the original capture, so the
+# fixture lands on the same color every time, no LUT-search
+# variance.
+#
+# To find the slug for a saved preset, long-press / right-click the
+# preset's swatch in the JS card to open the edit modal. The slug
+# field is shown there and is editable (alphanumeric, underscore,
+# or hyphen, up to 15 chars).
+
+- alias: "Pool: recall a saved preset by slug"
+  description: >
+    Replay the exact (start_byte, wait_ms) recipe stored on the
+    bridge under the given slug. Fast, deterministic, and
+    independent of any RGB→LUT search.
+  trigger:
+    - platform: time
+      at: "20:30:00"
+  action:
+    - service: esphome.colorsplash_xg_bridge_color_preset_recall
+      data:
+        slug: sunset_magenta
+
+- alias: "Pool: cycle through saved presets at sunset"
+  description: >
+    Drive a different saved preset every two minutes for the first
+    six minutes after sunset. Replace the slugs with whatever
+    you've saved on your bridge.
+  trigger:
+    - platform: sun
+      event: sunset
+  action:
+    - service: esphome.colorsplash_xg_bridge_color_preset_recall
+      data: {slug: orange}
+    - delay: "00:02:00"
+    - service: esphome.colorsplash_xg_bridge_color_preset_recall
+      data: {slug: sea_green}
+    - delay: "00:02:00"
+    - service: esphome.colorsplash_xg_bridge_color_preset_recall
+      data: {slug: sunset_magenta}
+
 - alias: "Pool: deep blue for nighttime"
   description: "Drive the fixture to a deep blue (Parisian Blue solid)"
   trigger:
