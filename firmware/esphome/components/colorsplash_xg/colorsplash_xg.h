@@ -7,6 +7,7 @@
 #include "esphome/components/esp32_ble_client/ble_client_base.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/core/component.h"
+#include "esphome/core/preferences.h"
 
 #include <deque>
 #include <functional>
@@ -31,6 +32,27 @@ constexpr const char *COMMAND_CHAR_UUID_STR =
 
 // Standard Bluetooth SIG Client Characteristic Configuration.
 constexpr uint16_t CCCD_UUID_U16 = 0x2902;
+
+// User-defined color preset table (issue #53). Presets live in
+// NVS so they survive bridge reboots and are addressable by HA
+// automations via the color_preset_recall service. The hex
+// fields are stored alongside the (start_byte, wait_ms) recipe
+// so HA / the JS card can render a preview swatch without re-
+// querying the original RGB target.
+constexpr size_t MAX_COLOR_PRESETS = 20;
+struct ColorPreset {
+  char     slug[16];   // automation-addressable id [a-z0-9_]
+  char     name[32];   // human display label
+  uint8_t  r, g, b;    // hex preview color
+  uint8_t  start_byte; // pool_scrub recipe — fixture byte
+  uint32_t wait_ms;    // pool_scrub recipe — Lock delay
+};
+struct ColorPresetStore {
+  uint32_t    magic;   // schema version sentinel
+  uint32_t    count;
+  ColorPreset entries[MAX_COLOR_PRESETS];
+};
+constexpr uint32_t COLOR_PRESET_MAGIC = 0xC050E751;
 
 // Single-byte value written to the CCCD to enable indications (not
 // notifications) on the command characteristic. See
@@ -108,6 +130,30 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   optional<PickRecipe> last_picked_recipe() const {
     return this->last_picked_recipe_;
   }
+
+  // ─── Color preset table (NVS-backed, addressable by HA
+  // automations via the color_preset_* services) ──────────────
+
+  // Save (or update by slug). Returns false if the slot table is
+  // full or the slug is not a valid identifier.
+  bool color_preset_save(const std::string &slug,
+                         const std::string &name,
+                         uint8_t r, uint8_t g, uint8_t b,
+                         uint8_t start_byte, uint32_t wait_ms);
+
+  // Look up by slug; if found, dispatch the recipe (start_byte
+  // → set_timeout(wait_ms) → Lock byte). Returns false if not
+  // found or BLE not ready.
+  bool color_preset_recall(const std::string &slug);
+
+  // Remove from NVS. Returns false if not found.
+  bool color_preset_delete(const std::string &slug);
+
+  // Serialize all presets to a JSON array string for the
+  // pool_color_presets text_sensor. Format:
+  //   [{"slug":"...","name":"...","hex":"#rrggbb",
+  //     "start_byte":N,"wait_ms":N}, ...]
+  std::string color_presets_json() const;
 
   // Most recent "preset" byte sent — one of the 12 visible effects
   // (0x01..0x0c). Used by the light entity to decide what to send
@@ -197,6 +243,13 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   optional<uint8_t> last_preset_byte_;
   optional<PickRecipe> last_picked_recipe_;
   bool last_send_was_return_{false};
+
+  // Color preset NVS storage (#53). Loaded once at setup(),
+  // re-saved after every save/delete service call.
+  void load_color_presets_();
+  void save_color_presets_();
+  ColorPresetStore preset_store_{};
+  ESPPreferenceObject preset_pref_;
   std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 
   // Watchdog state — see PROTOCOL.md §Auto-reconnect (#12) for the

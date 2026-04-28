@@ -89,6 +89,7 @@ void ColorSplashXG::setup() {
                 "colorsplash_xg: scanning for '%s' advertiser%s",
                 CONTROLLER_LOCAL_NAME,
                 this->mac_override_ ? " (MAC override active)" : "");
+  this->load_color_presets_();
 }
 
 void ColorSplashXG::loop() {
@@ -597,6 +598,182 @@ ColorSplashXG::PickRecipe ColorSplashXG::pick_color(
     });
   }
   return rec;
+}
+
+// ─── Color preset table (issue #53) ────────────────────────────
+
+namespace {
+bool is_valid_preset_slug(const std::string &s) {
+  if (s.empty() || s.size() >= sizeof(ColorPreset::slug)) return false;
+  for (char c : s) {
+    if (!((c >= 'a' && c <= 'z')
+          || (c >= '0' && c <= '9')
+          || c == '_')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool is_valid_preset_name(const std::string &s) {
+  if (s.empty() || s.size() >= sizeof(ColorPreset::name)) return false;
+  for (char c : s) {
+    // Printable ASCII excluding JSON-unsafe characters.
+    if (c < 0x20 || c >= 0x7F) return false;
+    if (c == '"' || c == '\\') return false;
+  }
+  return true;
+}
+}  // anonymous namespace
+
+void ColorSplashXG::load_color_presets_() {
+  this->preset_pref_ =
+      global_preferences->make_preference<ColorPresetStore>(0xC9101753);
+  if (this->preset_pref_.load(&this->preset_store_)
+      && this->preset_store_.magic == COLOR_PRESET_MAGIC) {
+    if (this->preset_store_.count > MAX_COLOR_PRESETS) {
+      this->preset_store_.count = MAX_COLOR_PRESETS;
+    }
+    ESP_LOGI(TAG, "color_presets: loaded %u from NVS",
+             (unsigned) this->preset_store_.count);
+    return;
+  }
+  ESP_LOGI(TAG, "color_presets: initializing empty store "
+                "(no NVS data or schema mismatch)");
+  this->preset_store_.magic = COLOR_PRESET_MAGIC;
+  this->preset_store_.count = 0;
+  std::memset(this->preset_store_.entries, 0,
+              sizeof(this->preset_store_.entries));
+}
+
+void ColorSplashXG::save_color_presets_() {
+  this->preset_store_.magic = COLOR_PRESET_MAGIC;
+  this->preset_pref_.save(&this->preset_store_);
+  global_preferences->sync();
+}
+
+bool ColorSplashXG::color_preset_save(
+    const std::string &slug, const std::string &name,
+    uint8_t r, uint8_t g, uint8_t b,
+    uint8_t start_byte, uint32_t wait_ms) {
+  if (!is_valid_preset_slug(slug)) {
+    ESP_LOGW(TAG, "color_preset_save: invalid slug '%s' "
+                  "(allowed [a-z0-9_], up to %u chars)",
+             slug.c_str(),
+             (unsigned)(sizeof(ColorPreset::slug) - 1));
+    return false;
+  }
+  if (!is_valid_preset_name(name)) {
+    ESP_LOGW(TAG, "color_preset_save: invalid name '%s' "
+                  "(printable ASCII only, no quotes/backslash, "
+                  "up to %u chars)",
+             name.c_str(),
+             (unsigned)(sizeof(ColorPreset::name) - 1));
+    return false;
+  }
+
+  // Find existing slot with this slug, or first empty slot.
+  int slot_index = -1;
+  for (size_t i = 0; i < this->preset_store_.count; i++) {
+    if (std::strcmp(this->preset_store_.entries[i].slug,
+                    slug.c_str()) == 0) {
+      slot_index = (int) i;
+      break;
+    }
+  }
+  bool is_new = (slot_index < 0);
+  if (is_new) {
+    if (this->preset_store_.count >= MAX_COLOR_PRESETS) {
+      ESP_LOGW(TAG, "color_preset_save: storage full (max %u)",
+               (unsigned) MAX_COLOR_PRESETS);
+      return false;
+    }
+    slot_index = (int) this->preset_store_.count;
+    this->preset_store_.count++;
+  }
+  ColorPreset &slot = this->preset_store_.entries[slot_index];
+  std::strncpy(slot.slug, slug.c_str(), sizeof(slot.slug) - 1);
+  slot.slug[sizeof(slot.slug) - 1] = '\0';
+  std::strncpy(slot.name, name.c_str(), sizeof(slot.name) - 1);
+  slot.name[sizeof(slot.name) - 1] = '\0';
+  slot.r = r;
+  slot.g = g;
+  slot.b = b;
+  slot.start_byte = start_byte;
+  slot.wait_ms = wait_ms;
+  this->save_color_presets_();
+  ESP_LOGI(TAG, "color_preset_save: %s slot=%d slug='%s' name='%s' "
+                "rgb=#%02x%02x%02x start_byte=0x%02x wait_ms=%u",
+           is_new ? "added" : "updated",
+           slot_index, slug.c_str(), name.c_str(),
+           r, g, b, start_byte, (unsigned) wait_ms);
+  return true;
+}
+
+bool ColorSplashXG::color_preset_recall(const std::string &slug) {
+  for (size_t i = 0; i < this->preset_store_.count; i++) {
+    const ColorPreset &slot = this->preset_store_.entries[i];
+    if (std::strcmp(slot.slug, slug.c_str()) == 0) {
+      ESP_LOGI(TAG, "color_preset_recall: '%s' (%s) "
+                    "start_byte=0x%02x wait_ms=%u",
+               slot.slug, slot.name, slot.start_byte,
+               (unsigned) slot.wait_ms);
+      this->send_effect_byte(slot.start_byte);
+      if (slot.wait_ms > 0) {
+        const uint32_t wait_ms = slot.wait_ms;
+        this->set_timeout("preset_lock", wait_ms, [this]() {
+          this->send_effect_byte(0x0d);
+        });
+      }
+      return true;
+    }
+  }
+  ESP_LOGW(TAG, "color_preset_recall: slug '%s' not found",
+           slug.c_str());
+  return false;
+}
+
+bool ColorSplashXG::color_preset_delete(const std::string &slug) {
+  for (size_t i = 0; i < this->preset_store_.count; i++) {
+    if (std::strcmp(this->preset_store_.entries[i].slug,
+                    slug.c_str()) == 0) {
+      // Shift remaining entries down to keep the active prefix
+      // contiguous.
+      for (size_t j = i; j + 1 < this->preset_store_.count; j++) {
+        this->preset_store_.entries[j] =
+            this->preset_store_.entries[j + 1];
+      }
+      this->preset_store_.count--;
+      std::memset(&this->preset_store_.entries[this->preset_store_.count],
+                  0, sizeof(ColorPreset));
+      this->save_color_presets_();
+      ESP_LOGI(TAG, "color_preset_delete: '%s'", slug.c_str());
+      return true;
+    }
+  }
+  ESP_LOGW(TAG, "color_preset_delete: slug '%s' not found",
+           slug.c_str());
+  return false;
+}
+
+std::string ColorSplashXG::color_presets_json() const {
+  std::string out = "[";
+  for (size_t i = 0; i < this->preset_store_.count; i++) {
+    const ColorPreset &slot = this->preset_store_.entries[i];
+    if (i > 0) out += ',';
+    char buf[160];
+    std::snprintf(buf, sizeof(buf),
+                  "{\"slug\":\"%s\",\"name\":\"%s\","
+                  "\"hex\":\"#%02x%02x%02x\","
+                  "\"start_byte\":%u,\"wait_ms\":%u}",
+                  slot.slug, slot.name,
+                  slot.r, slot.g, slot.b,
+                  (unsigned) slot.start_byte,
+                  (unsigned) slot.wait_ms);
+    out += buf;
+  }
+  out += "]";
+  return out;
 }
 
 }  // namespace colorsplash_xg

@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -93,17 +93,56 @@ const DEFAULTS = {
   light_entity: null,
   lock_entity: null,
   return_entity: null,
-  recipe_entity: null,         // text_sensor with "0xNN,wait_ms"
+  recipe_entity: null,         // text_sensor "0xNN,wait_ms_decimal"
+  presets_entity: null,        // text_sensor with JSON preset list
   scrub_service: "esphome.colorsplash_xg_bridge_pool_scrub",
-  presets: [],
+  preset_save_service:
+      "esphome.colorsplash_xg_bridge_color_preset_save",
+  preset_recall_service:
+      "esphome.colorsplash_xg_bridge_color_preset_recall",
+  preset_delete_service:
+      "esphome.colorsplash_xg_bridge_color_preset_delete",
+  presets: [],                 // optional YAML-defined static list
 };
 
-// localStorage key for user-saved presets. Stored as a JSON array
-// of {name, hex, start_byte, wait_ms}. YAML-defined presets and
-// localStorage presets are merged in the picker — YAML is
-// version-controlled / shareable, localStorage is per-browser
-// persistence for ad-hoc captures.
-const PRESET_STORAGE_KEY = "colorsplash-xg-card.presets";
+// Curated reference colors for auto-suggested preset names.
+// Keep ~50 entries — broad coverage of the visible-light wheel
+// without bloating the card. When a save fires, we pick the
+// nearest entry by squared-RGB distance and offer that name as
+// the default.
+const COLOR_NAME_REFS = [
+  ["#ffffff","White"],     ["#000000","Black"],
+  ["#7f7f7f","Grey"],
+  ["#ff0000","Red"],       ["#dc143c","Crimson"],
+  ["#b22222","Firebrick"], ["#ff6347","Tomato"],
+  ["#ff7f50","Coral"],     ["#fa8072","Salmon"],
+  ["#ffa07a","Light Salmon"],
+  ["#ff4500","Orange Red"],["#ffa500","Orange"],
+  ["#ff8c00","Dark Orange"],
+  ["#ffd700","Gold"],      ["#ffff00","Yellow"],
+  ["#ffe4b5","Moccasin"],
+  ["#9acd32","Yellow Green"],
+  ["#7cfc00","Lawn Green"],
+  ["#00ff00","Green"],     ["#32cd32","Lime"],
+  ["#228b22","Forest Green"],
+  ["#2e8b57","Sea Green"], ["#3cb371","Medium Sea Green"],
+  ["#00fa9a","Mint"],      ["#7fffd4","Aquamarine"],
+  ["#00ced1","Turquoise"], ["#40e0d0","Turquoise"],
+  ["#00ffff","Cyan"],      ["#5f9ea0","Cadet Blue"],
+  ["#87ceeb","Sky Blue"],  ["#1e90ff","Dodger Blue"],
+  ["#0000ff","Blue"],      ["#4169e1","Royal Blue"],
+  ["#000080","Navy"],      ["#191970","Midnight Blue"],
+  ["#4b0082","Indigo"],
+  ["#8a2be2","Blue Violet"],
+  ["#9400d3","Violet"],    ["#9370db","Purple"],
+  ["#ba55d3","Orchid"],
+  ["#ff00ff","Magenta"],   ["#da70d6","Pink Orchid"],
+  ["#ff1493","Pink"],      ["#ff69b4","Hot Pink"],
+  ["#ffb6c1","Light Pink"],
+  ["#dc6b9c","Sunset Magenta"],
+  ["#5fa8c4","Pool Cyan"],
+  ["#a0522d","Sienna"],    ["#8b4513","Saddle Brown"],
+];
 
 const WHEEL_SIZE = 220;       // px — outer diameter of the HSV wheel
 const SLIDER_WIDTH = 100;     // px — vertical slider thickness
@@ -296,30 +335,87 @@ class ColorSplashCard extends HTMLElement {
         || `button.${prefix}pool_color_return`;
     merged.recipe_entity = merged.recipe_entity
         || `sensor.${prefix}pool_last_picked_recipe`;
+    merged.presets_entity = merged.presets_entity
+        || `sensor.${prefix}pool_color_presets`;
     this._config = merged;
-    this._userPresets = this._loadUserPresets();
   }
 
-  _loadUserPresets() {
+  // Read user presets from the bridge's pool_color_presets
+  // text_sensor (JSON array). Single source of truth — survives
+  // browser swaps and is addressable by HA automations via the
+  // color_preset_recall service.
+  _readUserPresets() {
+    const cfg = this._config;
+    const hass = this._hass;
+    if (!hass) return [];
+    const st = hass.states[cfg.presets_entity];
+    if (!st || !st.state || st.state === "unavailable"
+        || st.state === "unknown" || st.state === "") {
+      return [];
+    }
     try {
-      const raw = window.localStorage.getItem(PRESET_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      const parsed = JSON.parse(st.state);
+      if (!Array.isArray(parsed)) return [];
+      return parsed;
     } catch (e) {
-      console.warn("[colorsplash-xg-card] failed to load user presets", e);
+      console.warn("[colorsplash-xg-card] presets JSON parse error",
+                   st.state, e);
       return [];
     }
   }
 
-  _saveUserPresets() {
-    try {
-      window.localStorage.setItem(
-          PRESET_STORAGE_KEY,
-          JSON.stringify(this._userPresets || []));
-    } catch (e) {
-      console.warn("[colorsplash-xg-card] failed to save user presets", e);
+  // Service-call wrappers. Use indexOf("." ) instead of split so
+  // the suffix can contain dots without breaking.
+  _callService(serviceFqn, payload) {
+    const hass = this._hass;
+    if (!hass) return Promise.reject(new Error("hass not attached"));
+    const dotIdx = serviceFqn.indexOf(".");
+    if (dotIdx < 0) {
+      return Promise.reject(new Error(
+          `service "${serviceFqn}" missing '.'`));
     }
+    return hass.callService(
+        serviceFqn.slice(0, dotIdx),
+        serviceFqn.slice(dotIdx + 1),
+        payload);
+  }
+
+  // Suggest a name for a freshly-saved preset based on the RGB
+  // it represents. Pick the nearest curated name in squared-RGB
+  // distance.
+  _suggestPresetName(r, g, b) {
+    let bestName = "Custom Color";
+    let bestDist = Infinity;
+    for (const [hex, name] of COLOR_NAME_REFS) {
+      const [er, eg, eb] = hexToRgb(hex);
+      const d = (er - r) ** 2 + (eg - g) ** 2 + (eb - b) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        bestName = name;
+      }
+    }
+    return bestName;
+  }
+
+  // Build a slug from a display name. lowercase + alphanumeric +
+  // underscore, max 15 chars. If the resulting slug collides with
+  // an existing preset, append _2, _3, etc.
+  _slugify(name) {
+    let base = String(name).toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 15);
+    if (!base) base = "preset";
+    const taken = new Set(this._readUserPresets()
+        .map((p) => p.slug)
+        .filter((s) => typeof s === "string"));
+    if (!taken.has(base)) return base;
+    for (let n = 2; n < 99; n++) {
+      const trimLen = Math.max(1, 15 - String(n).length - 1);
+      const candidate = `${base.slice(0, trimLen)}_${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${base.slice(0, 13)}_${Date.now() % 1000}`;
   }
 
   // Read the current pick recipe from the bridge's exposed
@@ -342,14 +438,14 @@ class ColorSplashCard extends HTMLElement {
     };
   }
 
-  // Returns the merged YAML + localStorage preset list for
-  // rendering. localStorage presets carry a `_user: true` flag so
-  // delete-affordance shows only on those.
+  // Merge YAML-defined static presets with bridge-stored ones.
+  // YAML presets are read-only (no _user flag); bridge presets
+  // carry _user: true and a `slug` (their automation address).
   _allPresets() {
     const cfg = this._config;
     const yaml = (Array.isArray(cfg.presets) ? cfg.presets : [])
         .map((p) => ({...p, _user: false}));
-    const user = (this._userPresets || [])
+    const user = this._readUserPresets()
         .map((p) => ({...p, _user: true}));
     return [...yaml, ...user];
   }
@@ -375,13 +471,16 @@ class ColorSplashCard extends HTMLElement {
     const rgbColor = Array.isArray(attrs.rgb_color) ? attrs.rgb_color : null;
     const lightFound = !!lightState;
 
+    const presetsState = this._hass &&
+        this._hass.states[cfg.presets_entity];
     const key = [
       lightFound, isOn, activeEffect || "",
       rgbColor ? rgbColor.join(",") : "",
       this._effectsOpen,
       JSON.stringify(cfg.presets || []),
-      JSON.stringify(this._userPresets || []),
+      presetsState ? presetsState.state : "",
       this._readCurrentRecipe() ? "have-recipe" : "no-recipe",
+      this._editingSlug || "",
     ].join("|");
     if (key === this._lastRenderedKey && this.shadowRoot.firstChild) {
       return;
@@ -872,6 +971,175 @@ class ColorSplashCard extends HTMLElement {
         transform: scale(0.97);
       }
 
+      /* ─── Edit-preset modal ───────────────────────────────
+         Overlays the whole card via fixed positioning. The
+         backdrop click closes; clicks inside the modal body
+         don't propagate to the backdrop. */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        animation: cs-fade-in 120ms ease;
+      }
+      @keyframes cs-fade-in {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      .edit-modal {
+        background: var(--ha-card-background,
+                         var(--card-background-color, #1c1c1e));
+        color: var(--primary-text-color, #fff);
+        border-radius: 14px;
+        padding: 16px 18px;
+        min-width: 320px;
+        max-width: 90vw;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      }
+      .edit-modal * {
+        box-sizing: border-box;
+      }
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 1.05em;
+        font-weight: 600;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--divider-color,
+                                       rgba(127,127,127,0.25));
+      }
+      .modal-close {
+        background: transparent;
+        border: none;
+        color: inherit;
+        cursor: pointer;
+        padding: 4px;
+        --mdc-icon-size: 20px;
+      }
+      .modal-body {
+        padding: 14px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .modal-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .modal-row.tight {
+        gap: 6px;
+      }
+      .modal-swatch {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        border: 1px solid var(--divider-color,
+                              rgba(127,127,127,0.4));
+        flex: 0 0 auto;
+      }
+      .modal-meta {
+        flex: 1 1 auto;
+        font-size: 0.9em;
+        line-height: 1.5;
+        color: var(--secondary-text-color, #a0a0a0);
+      }
+      .modal-hex {
+        color: var(--primary-text-color, #fff);
+        font-weight: 600;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      .modal-label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 0.85em;
+        color: var(--secondary-text-color, #a0a0a0);
+      }
+      .modal-label input[type="text"],
+      .modal-label input[type="number"] {
+        background: var(--secondary-background-color, #2c2c2e);
+        color: var(--primary-text-color, #fff);
+        border: 1px solid var(--divider-color,
+                              rgba(127,127,127,0.35));
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 1em;
+        font-family: inherit;
+        width: 100%;
+      }
+      .modal-row.tight input[type="number"] {
+        flex: 1 1 auto;
+        text-align: center;
+      }
+      .modal-row.tight button {
+        background: var(--secondary-background-color, #2c2c2e);
+        color: var(--primary-text-color, #fff);
+        border: 1px solid var(--divider-color,
+                              rgba(127,127,127,0.35));
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .modal-test {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        background: var(--secondary-background-color, #2c2c2e);
+        color: var(--primary-text-color, #fff);
+        border: 1px dashed var(--divider-color,
+                                rgba(127,127,127,0.5));
+        border-radius: 10px;
+        padding: 8px;
+        cursor: pointer;
+        --mdc-icon-size: 18px;
+      }
+      .modal-footer {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-top: 12px;
+        border-top: 1px solid var(--divider-color,
+                                    rgba(127,127,127,0.25));
+      }
+      .modal-spacer {
+        flex: 1 1 auto;
+      }
+      .modal-delete {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent;
+        color: var(--error-color, #d32f2f);
+        border: 1px solid var(--error-color, #d32f2f);
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        --mdc-icon-size: 18px;
+      }
+      .modal-cancel,
+      .modal-save {
+        background: transparent;
+        color: var(--primary-text-color, #fff);
+        border: 1px solid var(--divider-color,
+                              rgba(127,127,127,0.4));
+        border-radius: 8px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .modal-save {
+        background: var(--primary-color, #03a9f4);
+        color: #fff;
+        border-color: var(--primary-color, #03a9f4);
+      }
+
       /* ─── Error banner ──────────────────────────────────── */
       .error-banner {
         background: var(--error-color, #d32f2f);
@@ -1137,7 +1405,99 @@ class ColorSplashCard extends HTMLElement {
           <span>Lock current color</span>
         </button>
       </div>
+      ${this._buildEditModal(this._editDraft)}
     `;
+  }
+
+  // Edit-preset modal — opened automatically after a save, and
+  // by long-press / right-click on a user preset swatch. Lets
+  // the user rename, tweak the timing in 100 ms steps, test-fire,
+  // delete, or cancel.
+  _buildEditModal(draft) {
+    if (!draft) return "";
+    const showName = this._showNameForByte(draft.start_byte);
+    return `
+      <div class="modal-backdrop" data-modal-backdrop>
+        <div class="edit-modal" data-modal>
+          <div class="modal-header">
+            <span>Edit preset</span>
+            <button class="modal-close"
+                    data-action="edit-preset-cancel"
+                    aria-label="Cancel">
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+
+          <div class="modal-body">
+            <div class="modal-row">
+              <div class="modal-swatch"
+                   style="background:${draft.hex};">
+              </div>
+              <div class="modal-meta">
+                <div class="modal-hex">${draft.hex.toUpperCase()}</div>
+                <div class="modal-show">Show: ${showName}</div>
+                <div class="modal-slug">Slug: ${draft.slug}</div>
+              </div>
+            </div>
+
+            <label class="modal-label">
+              Name
+              <input type="text" name="name" maxlength="31"
+                     value="${draft.name.replace(/"/g, "&quot;")}" />
+            </label>
+
+            <label class="modal-label">
+              Time offset (ms)
+              <div class="modal-row tight">
+                <button data-action="edit-preset-nudge"
+                        data-delta-ms="-100">−100</button>
+                <input type="number" name="wait_ms"
+                       min="0" step="100"
+                       value="${draft.wait_ms}" />
+                <button data-action="edit-preset-nudge"
+                        data-delta-ms="100">+100</button>
+              </div>
+            </label>
+
+            <button class="modal-test"
+                    data-action="edit-preset-test">
+              <ha-icon icon="mdi:flask"></ha-icon>
+              <span>Test fire</span>
+            </button>
+          </div>
+
+          <div class="modal-footer">
+            <button class="modal-delete"
+                    data-action="edit-preset-delete">
+              <ha-icon icon="mdi:trash-can-outline"></ha-icon>
+              <span>Delete</span>
+            </button>
+            <span class="modal-spacer"></span>
+            <button class="modal-cancel"
+                    data-action="edit-preset-cancel">Cancel</button>
+            <button class="modal-save"
+                    data-action="edit-preset-save">Save</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  _showNameForByte(byte) {
+    const known = {
+      0x01: "Peruvian Paradise",
+      0x02: "Super Nova",
+      0x03: "Northern Lights",
+      0x04: "Tidal Wave",
+      0x05: "Patriot Dream",
+      0x06: "Desert Skies",
+      0x07: "Nova",
+      0x08: "Parisian Blue (solid)",
+      0x09: "New Zealand Green (solid)",
+      0x0a: "Brazilian Red (solid)",
+      0x0b: "Arctic White (solid)",
+      0x0c: "Miami Pink (solid)",
+    };
+    return known[byte] || `byte 0x${byte.toString(16)}`;
   }
 
   // ---- event handling ----
@@ -1228,40 +1588,27 @@ class ColorSplashCard extends HTMLElement {
         const p = this._allPresets()[idx];
         console.info(
             `[colorsplash-xg-card v${VERSION}] preset replay`,
-            {idx, preset: p, scrub_service: cfg.scrub_service});
+            {idx, preset: p});
         if (!p) {
           console.warn("preset index out of range", idx);
           break;
         }
-        // ESPHome service names contain dots in the form
-        // "esphome.<device_slug>_<service_name>". The first dot
-        // separates domain from service. Split with limit 2 picks
-        // ALL of the suffix into the second slot, even if it
-        // contains underscores.
-        const dotIdx = cfg.scrub_service.indexOf(".");
-        if (dotIdx < 0) {
-          console.warn("scrub_service missing '.': "
-                       + cfg.scrub_service);
-          break;
-        }
-        const domain = cfg.scrub_service.slice(0, dotIdx);
-        const name = cfg.scrub_service.slice(dotIdx + 1);
-        const args = {
-          start_byte: p.start_byte | 0,
-          wait_ms: p.wait_ms | 0,
-        };
-        console.info("calling service", {domain, name, args});
         try {
-          await hass.callService(domain, name, args);
-        } catch (err) {
-          console.error("scrub service call failed:", err);
-          break;
-        }
-        try {
+          if (p._user && p.slug) {
+            // Bridge-stored preset → addressable by slug
+            await this._callService(cfg.preset_recall_service,
+                                    {slug: p.slug});
+          } else {
+            // Static YAML preset → fall back to pool_scrub recipe
+            await this._callService(cfg.scrub_service, {
+              start_byte: p.start_byte | 0,
+              wait_ms: p.wait_ms | 0,
+            });
+          }
           await hass.callService("light", "turn_on",
               {entity_id: cfg.light_entity, effect: "None"});
         } catch (err) {
-          console.error("light.turn_on(effect:None) failed:", err);
+          console.error("preset replay failed:", err);
         }
         break;
       }
@@ -1269,32 +1616,134 @@ class ColorSplashCard extends HTMLElement {
       case "save-preset": {
         const recipe = this._readCurrentRecipe();
         if (!recipe) {
-          console.warn("no recipe available — has the user picked a color?");
+          console.warn("no recipe available — picker hasn't run yet");
           break;
         }
         const lightState = hass.states[cfg.light_entity];
-        const rgb = lightState && lightState.attributes &&
-            lightState.attributes.rgb_color;
+        const rgb = lightState && lightState.attributes
+            && lightState.attributes.rgb_color;
         if (!Array.isArray(rgb)) {
           console.warn("no rgb_color on light entity");
           break;
         }
+        const [r, g, b] = rgb;
+        const suggested = this._suggestPresetName(r, g, b);
+        const slug = this._slugify(suggested);
         const hex = "#" + rgb.map((c) =>
             c.toString(16).padStart(2, "0")).join("");
-        // Use window.prompt for v0.9.0 — minimal but functional.
-        // A nicer modal can come later.
-        const name = window.prompt(
-            "Name this preset:",
-            `My Color ${(this._userPresets || []).length + 1}`);
-        if (!name) break;
-        this._userPresets = [
-          ...(this._userPresets || []),
-          {name, hex, start_byte: recipe.start_byte,
-           wait_ms: recipe.wait_ms},
-        ];
-        this._saveUserPresets();
+        try {
+          await this._callService(cfg.preset_save_service, {
+            slug, name: suggested,
+            red: r, green: g, blue: b,
+            start_byte: recipe.start_byte,
+            wait_ms: recipe.wait_ms,
+          });
+        } catch (err) {
+          console.error("color_preset_save failed:", err);
+          break;
+        }
+        // Open the edit modal pointing at the just-saved preset
+        // so the user can rename or tweak the timing immediately.
+        this._editingSlug = slug;
+        this._editDraft = {
+          slug, name: suggested, hex,
+          start_byte: recipe.start_byte,
+          wait_ms: recipe.wait_ms,
+        };
         this._lastRenderedKey = "";
         this._render();
+        break;
+      }
+
+      case "edit-preset-cancel": {
+        this._editingSlug = null;
+        this._editDraft = null;
+        this._lastRenderedKey = "";
+        this._render();
+        break;
+      }
+
+      case "edit-preset-save": {
+        if (!this._editDraft) break;
+        const d = this._editDraft;
+        const nameInput = this.shadowRoot.querySelector(
+            ".edit-modal input[name=name]");
+        const waitInput = this.shadowRoot.querySelector(
+            ".edit-modal input[name=wait_ms]");
+        const newName = nameInput
+            ? String(nameInput.value).slice(0, 31)
+            : d.name;
+        const newWaitMs = waitInput
+            ? Math.max(0, parseInt(waitInput.value, 10) | 0)
+            : d.wait_ms;
+        const [er, eg, eb] = hexToRgb(d.hex);
+        try {
+          await this._callService(cfg.preset_save_service, {
+            slug: d.slug,
+            name: newName,
+            red: er, green: eg, blue: eb,
+            start_byte: d.start_byte,
+            wait_ms: newWaitMs,
+          });
+        } catch (err) {
+          console.error("color_preset_save (edit) failed:", err);
+          break;
+        }
+        this._editingSlug = null;
+        this._editDraft = null;
+        this._lastRenderedKey = "";
+        this._render();
+        break;
+      }
+
+      case "edit-preset-delete": {
+        if (!this._editDraft) break;
+        if (!window.confirm(
+            `Delete preset "${this._editDraft.name}"?`)) break;
+        try {
+          await this._callService(cfg.preset_delete_service, {
+            slug: this._editDraft.slug,
+          });
+        } catch (err) {
+          console.error("color_preset_delete failed:", err);
+          break;
+        }
+        this._editingSlug = null;
+        this._editDraft = null;
+        this._lastRenderedKey = "";
+        this._render();
+        break;
+      }
+
+      case "edit-preset-test": {
+        if (!this._editDraft) break;
+        // Fire the (possibly tweaked) recipe via pool_scrub
+        // without persisting the changes — lets the user verify
+        // the timing nudge before saving.
+        const waitInput = this.shadowRoot.querySelector(
+            ".edit-modal input[name=wait_ms]");
+        const tryWaitMs = waitInput
+            ? Math.max(0, parseInt(waitInput.value, 10) | 0)
+            : this._editDraft.wait_ms;
+        try {
+          await this._callService(cfg.scrub_service, {
+            start_byte: this._editDraft.start_byte,
+            wait_ms: tryWaitMs,
+          });
+        } catch (err) {
+          console.error("test-fire pool_scrub failed:", err);
+        }
+        break;
+      }
+
+      case "edit-preset-nudge": {
+        const delta = parseInt(t.dataset.deltaMs, 10) | 0;
+        const waitInput = this.shadowRoot.querySelector(
+            ".edit-modal input[name=wait_ms]");
+        if (!waitInput) break;
+        const next = Math.max(0,
+            (parseInt(waitInput.value, 10) | 0) + delta);
+        waitInput.value = String(next);
         break;
       }
     }
@@ -1336,7 +1785,7 @@ class ColorSplashCard extends HTMLElement {
         pressTimer = setTimeout(() => {
           pressTimer = null;
           this._suppressNextClick = true;
-          this._maybeDeletePreset(sw);
+          this._openEditModalForSwatch(sw);
         }, 600);
       });
       sw.addEventListener("pointerup",     cancel);
@@ -1344,27 +1793,60 @@ class ColorSplashCard extends HTMLElement {
       sw.addEventListener("pointerleave",  cancel);
       sw.addEventListener("pointercancel", cancel);
       sw.addEventListener("contextmenu", (e) => {
-        // Right-click on desktop also opens the delete prompt.
+        // Right-click on desktop also opens the edit modal.
         e.preventDefault();
         this._suppressNextClick = true;
-        this._maybeDeletePreset(sw);
+        this._openEditModalForSwatch(sw);
       });
     });
+
+    // Edit-modal wiring: backdrop-click closes; input changes
+    // sync into _editDraft so re-renders preserve typing.
+    const backdrop = this.shadowRoot.querySelector(
+        "[data-modal-backdrop]");
+    if (backdrop) {
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) {
+          this._editingSlug = null;
+          this._editDraft = null;
+          this._lastRenderedKey = "";
+          this._render();
+        }
+      });
+    }
+    const nameInput = this.shadowRoot.querySelector(
+        ".edit-modal input[name=name]");
+    if (nameInput && this._editDraft) {
+      nameInput.addEventListener("input", (e) => {
+        if (this._editDraft) {
+          this._editDraft.name = e.target.value;
+        }
+      });
+    }
+    const waitInput = this.shadowRoot.querySelector(
+        ".edit-modal input[name=wait_ms]");
+    if (waitInput && this._editDraft) {
+      waitInput.addEventListener("input", (e) => {
+        if (this._editDraft) {
+          this._editDraft.wait_ms =
+              Math.max(0, parseInt(e.target.value, 10) | 0);
+        }
+      });
+    }
   }
 
-  _maybeDeletePreset(sw) {
+  _openEditModalForSwatch(sw) {
     const idx = parseInt(sw.dataset.presetIndex, 10);
-    const all = this._allPresets();
-    const p = all[idx];
-    if (!p || !p._user) return;
-    // user-preset index in this._userPresets:
-    const yamlCount = (Array.isArray(this._config.presets)
-                       ? this._config.presets.length : 0);
-    const userIdx = idx - yamlCount;
-    if (userIdx < 0 || userIdx >= (this._userPresets || []).length) return;
-    if (!window.confirm(`Delete preset "${p.name}"?`)) return;
-    this._userPresets.splice(userIdx, 1);
-    this._saveUserPresets();
+    const p = this._allPresets()[idx];
+    if (!p || !p._user || !p.slug) return;
+    this._editingSlug = p.slug;
+    this._editDraft = {
+      slug: p.slug,
+      name: p.name || "",
+      hex: p.hex || "#444",
+      start_byte: p.start_byte | 0,
+      wait_ms: p.wait_ms | 0,
+    };
     this._lastRenderedKey = "";
     this._render();
   }

@@ -96,6 +96,48 @@ api:
             id(xg).pick_color((uint8_t) red, (uint8_t) green,
                               (uint8_t) blue);
 
+    # User color presets (issue #53). Each preset is keyed by a
+    # `slug` ([a-z0-9_], up to 15 chars) so HA automations can
+    # call:
+    #   service: esphome.colorsplash_xg_bridge_color_preset_recall
+    #   data: {slug: sunset_magenta}
+    # The hex (r,g,b) is stored alongside the (start_byte,
+    # wait_ms) recipe so the JS card can render preview swatches
+    # and HA dashboards can show them without re-running the
+    # picker.
+    - service: color_preset_save
+      variables:
+        slug: string
+        name: string
+        red: int
+        green: int
+        blue: int
+        start_byte: int
+        wait_ms: int
+      then:
+        - lambda: |-
+            id(xg).color_preset_save(
+                slug, name,
+                (uint8_t) red, (uint8_t) green, (uint8_t) blue,
+                (uint8_t) start_byte, (uint32_t) wait_ms);
+            id(pool_color_presets).publish_state(
+                id(xg).color_presets_json());
+
+    - service: color_preset_recall
+      variables:
+        slug: string
+      then:
+        - lambda: 'id(xg).color_preset_recall(slug);'
+
+    - service: color_preset_delete
+      variables:
+        slug: string
+      then:
+        - lambda: |-
+            id(xg).color_preset_delete(slug);
+            id(pool_color_presets).publish_state(
+                id(xg).color_presets_json());
+
 ota:
   - platform: esphome
     password: !secret ota_password
@@ -262,6 +304,16 @@ text_sensor:
       std::snprintf(buf, sizeof(buf), "0x%02x,%u",
                     rec->start_byte, (unsigned) rec->wait_ms);
       return std::string(buf);
+
+  # Saved color preset table — JSON array (issue #53). The
+  # color_preset_save / color_preset_delete services publish
+  # the new value immediately; this update_interval is the
+  # fallback for any drift across browser refreshes.
+  - platform: template
+    name: "Pool Color Presets"
+    id: pool_color_presets
+    update_interval: 30s
+    lambda: 'return id(xg).color_presets_json();'
 
 # Numeric diagnostics (#13). RSSI is polled every 30 s while
 # connected; the two counters are monotonic-within-session totals
