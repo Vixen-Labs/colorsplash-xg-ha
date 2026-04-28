@@ -1426,15 +1426,27 @@ const SHOW_LOOPS_MS = {
 
 // Shows the user can target via the edit-modal's Show dropdown
 // (#56 sub-5). Bytes match SHOW_BYTES in tools/generate_show_lut.py.
+//
+// Super Nova is intentionally absent: it plays the same color
+// sequence as Nova at ~5.36× the rate (verified — see
+// docs/PROTOCOL.md), so it's excluded from the picker LUT and
+// from this dropdown. Nova's slower holds give the Lock byte a
+// much wider window to land on the intended color.
 const SHOW_BYTE_MAP = [
   {byte: 0x07, name: "Nova"},
-  {byte: 0x02, name: "Super Nova"},
   {byte: 0x03, name: "Northern Lights"},
   {byte: 0x04, name: "Tidal Wave"},
   {byte: 0x05, name: "Patriot Dream"},
   {byte: 0x06, name: "Desert Skies"},
   {byte: 0x01, name: "Peruvian Paradise"},
 ];
+
+// Show bytes whose color sequence is rendered as discrete
+// hard-stop bands in the timeline (no blending between samples).
+// Matches DISCRETE_STEP_SHOWS in tools/generate_show_lut.py —
+// Nova flips between solid colors with brief AC-interrupt
+// blackouts, no smooth transitions, so blending is misleading.
+const DISCRETE_BAND_BYTES = new Set([0x07]);
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -2919,10 +2931,12 @@ class ColorSplashCard extends HTMLElement {
   // delete, or cancel.
   _buildEditModal(draft) {
     if (!draft) return "";
-    const {samples, loopMs} = this._showLutFor(draft.start_byte);
-    const gradient = this._timelineGradient(samples, loopMs);
-    const markerPct = Math.max(0, Math.min(100,
-        (draft.wait_ms / loopMs) * 100));
+    const {samples, loopMs, activeStart, activeEnd} =
+        this._showLutFor(draft.start_byte);
+    const gradient = this._timelineGradient(
+        draft.start_byte, samples, activeStart, activeEnd);
+    const markerPct = this._waitMsToStripPct(
+        draft.wait_ms, activeStart, activeEnd);
     const showOptions = SHOW_BYTE_MAP.map((s) => {
       const sel = s.byte === draft.start_byte ? "selected" : "";
       return `<option value="${s.byte}" ${sel}>${s.name}</option>`;
@@ -3007,7 +3021,9 @@ class ColorSplashCard extends HTMLElement {
                 </button>
               </div>
               <div class="modal-timeline-wrap"
-                   data-modal-timeline data-loop-ms="${loopMs}"
+                   data-modal-timeline
+                   data-active-start="${activeStart}"
+                   data-active-end="${activeEnd}"
                    title="Tap to jump to that moment in the show">
                 <div class="modal-timeline-strip"
                      style="background:${gradient};"></div>
@@ -3074,28 +3090,84 @@ class ColorSplashCard extends HTMLElement {
     return Math.max(0, Math.round(v * 1000));
   }
 
-  // Resolve the LUT samples + loop length for a given show byte.
-  // Returns {samples, loopMs}. samples is empty for shows we don't
-  // have data for (Super Nova is excluded from the LUT, so its
-  // timeline renders as an empty placeholder).
+  // Resolve LUT samples + active range for a given show byte.
+  // Returns {samples, loopMs, activeStart, activeEnd}. The active
+  // range crops the post-byte blackout (skip_ms in firmware) from
+  // the timeline display — only the actually-lit portion of the
+  // loop is shown. samples is empty for shows we don't have data
+  // for (Super Nova is excluded from the LUT).
   _showLutFor(byte) {
     const samples = SHOW_LUT_DATA.filter((row) => row[0] === byte);
     let loopMs = SHOW_LOOPS_MS[byte] | 0;
     if (loopMs <= 0) loopMs = 30000;
-    return {samples, loopMs};
+    const activeStart = samples.length ? samples[0][1] : 0;
+    const activeEnd = samples.length
+        ? samples[samples.length - 1][1] : loopMs;
+    return {samples, loopMs, activeStart, activeEnd};
   }
 
-  // Build a CSS linear-gradient string from LUT samples — colors
-  // positioned at their t_ms/loop_ms percentage. Browser handles
-  // hundreds of stops fine; for empty samples returns a neutral
-  // background.
-  _timelineGradient(samples, loopMs) {
+  // Map a wait_ms value into a percentage along the timeline strip,
+  // accounting for the cropped blackout. Clamped to [0, 100] so a
+  // wait_ms outside the active range still parks the marker at
+  // a strip edge instead of overflowing.
+  _waitMsToStripPct(t, activeStart, activeEnd) {
+    const span = activeEnd - activeStart;
+    if (span <= 0) return 0;
+    return Math.max(0, Math.min(100,
+        ((t - activeStart) / span) * 100));
+  }
+
+  // Inverse of _waitMsToStripPct — converts a click x percentage
+  // along the strip back to a wait_ms value within the active
+  // range. Used by the timeline tap handler.
+  _stripPctToWaitMs(pct, activeStart, activeEnd) {
+    const span = activeEnd - activeStart;
+    return Math.round(activeStart + (pct / 100) * span);
+  }
+
+  // Build a CSS linear-gradient for the timeline strip. For
+  // shows in DISCRETE_BAND_BYTES (Nova), each sample becomes a
+  // hard-edged band centered on its t_ms; the band edges land on
+  // the midpoints between consecutive samples. For all other
+  // shows the colors blend smoothly between samples.
+  _timelineGradient(byte, samples, activeStart, activeEnd) {
     if (!samples.length) {
       return "var(--secondary-background-color, #2c2c2e)";
     }
+    const span = activeEnd - activeStart;
+    if (span <= 0) {
+      // Single-sample show — flat color across the strip.
+      const [, , r, g, b] = samples[0];
+      return `rgb(${r},${g},${b})`;
+    }
+    const tToPct = (t) => Math.max(0, Math.min(100,
+        ((t - activeStart) / span) * 100));
+
+    if (DISCRETE_BAND_BYTES.has(byte)) {
+      // Hard-edged bands — one per sample, edges at midpoints.
+      const stops = [];
+      for (let i = 0; i < samples.length; i++) {
+        const t = samples[i][1];
+        const r = samples[i][2], g = samples[i][3],
+              b = samples[i][4];
+        const left_t = (i === 0)
+            ? activeStart
+            : (samples[i - 1][1] + t) / 2;
+        const right_t = (i === samples.length - 1)
+            ? activeEnd
+            : (t + samples[i + 1][1]) / 2;
+        const leftPct = tToPct(left_t).toFixed(2);
+        const rightPct = tToPct(right_t).toFixed(2);
+        stops.push(`rgb(${r},${g},${b}) ${leftPct}%`);
+        stops.push(`rgb(${r},${g},${b}) ${rightPct}%`);
+      }
+      return `linear-gradient(to right, ${stops.join(", ")})`;
+    }
+
+    // Smooth-blend default: one stop per sample at its t_ms pct.
     const stops = samples.map(([_byte, t, r, g, b]) => {
-      const pct = Math.max(0, Math.min(100, (t / loopMs) * 100));
-      return `rgb(${r},${g},${b}) ${pct.toFixed(2)}%`;
+      const pct = tToPct(t).toFixed(2);
+      return `rgb(${r},${g},${b}) ${pct}%`;
     });
     return `linear-gradient(to right, ${stops.join(", ")})`;
   }
@@ -3386,9 +3458,12 @@ class ColorSplashCard extends HTMLElement {
     }
     const tlWrap = root.querySelector("[data-modal-timeline]");
     if (tlWrap) {
-      const loopMs = parseInt(tlWrap.dataset.loopMs, 10) || 30000;
-      const pct = Math.max(0, Math.min(100,
-          (this._editDraft.wait_ms / loopMs) * 100));
+      const activeStart =
+          parseInt(tlWrap.dataset.activeStart, 10) || 0;
+      const activeEnd =
+          parseInt(tlWrap.dataset.activeEnd, 10) || 30000;
+      const pct = this._waitMsToStripPct(
+          this._editDraft.wait_ms, activeStart, activeEnd);
       const marker = tlWrap.querySelector(".modal-timeline-marker");
       if (marker) marker.style.left = `${pct.toFixed(2)}%`;
     }
@@ -3493,15 +3568,17 @@ class ColorSplashCard extends HTMLElement {
         if (!this._editDraft) return;
         this._editDraft.wait_ms =
             this._parseWaitInput(e.target.value);
-        // Sync the timeline marker (don't re-format the input
-        // mid-typing — the user might still be entering digits).
+        // Sync the timeline marker. Don't re-format the input
+        // mid-typing — the user might still be entering digits.
         const tlWrap = this.shadowRoot.querySelector(
             "[data-modal-timeline]");
         if (tlWrap) {
-          const loopMs =
-              parseInt(tlWrap.dataset.loopMs, 10) || 30000;
-          const pct = Math.max(0, Math.min(100,
-              (this._editDraft.wait_ms / loopMs) * 100));
+          const activeStart =
+              parseInt(tlWrap.dataset.activeStart, 10) || 0;
+          const activeEnd =
+              parseInt(tlWrap.dataset.activeEnd, 10) || 30000;
+          const pct = this._waitMsToStripPct(
+              this._editDraft.wait_ms, activeStart, activeEnd);
           const marker = tlWrap.querySelector(
               ".modal-timeline-marker");
           if (marker) marker.style.left = `${pct.toFixed(2)}%`;
@@ -3552,27 +3629,29 @@ class ColorSplashCard extends HTMLElement {
       });
     }
     // #56 sub-5: show dropdown — change the underlying byte and
-    // reset wait_ms (the previous offset would be meaningless in
-    // a different show's loop).
+    // reset wait_ms to the new show's first sample (so the marker
+    // lands at the strip's left edge instead of inside the
+    // already-cropped blackout).
     const showSelect = this.shadowRoot.querySelector(
         ".edit-modal select[name=start_byte]");
     if (showSelect && this._editDraft) {
       showSelect.addEventListener("change", (e) => {
         if (!this._editDraft) return;
         const newByte = parseInt(e.target.value, 10) | 0;
+        const {samples, activeStart, activeEnd} =
+            this._showLutFor(newByte);
         this._editDraft.start_byte = newByte;
-        this._editDraft.wait_ms = 0;
-        // Re-render the timeline (gradient + marker) since the
-        // show change affects both the colors and the loop ms.
+        this._editDraft.wait_ms = activeStart;
         const tlWrap = this.shadowRoot.querySelector(
             "[data-modal-timeline]");
         if (tlWrap) {
-          const {samples, loopMs} = this._showLutFor(newByte);
-          tlWrap.dataset.loopMs = String(loopMs);
-          const strip = tlWrap.querySelector(".modal-timeline-strip");
+          tlWrap.dataset.activeStart = String(activeStart);
+          tlWrap.dataset.activeEnd = String(activeEnd);
+          const strip = tlWrap.querySelector(
+              ".modal-timeline-strip");
           if (strip) {
-            strip.style.background =
-                this._timelineGradient(samples, loopMs);
+            strip.style.background = this._timelineGradient(
+                newByte, samples, activeStart, activeEnd);
           }
           const marker = tlWrap.querySelector(
               ".modal-timeline-marker");
@@ -3580,10 +3659,12 @@ class ColorSplashCard extends HTMLElement {
         }
         const wi = this.shadowRoot.querySelector(
             ".edit-modal input[name=wait_ms]");
-        if (wi) wi.value = this._formatWaitMs(0);
+        if (wi) wi.value = this._formatWaitMs(activeStart);
       });
     }
     // #56 sub-1: tap the timeline strip to jump to that moment.
+    // Click x maps into the active range (blackout cropped) so
+    // the resulting wait_ms falls inside the show's lit window.
     const tlWrap = this.shadowRoot.querySelector(
         "[data-modal-timeline]");
     if (tlWrap && this._editDraft) {
@@ -3591,12 +3672,14 @@ class ColorSplashCard extends HTMLElement {
         if (!this._editDraft) return;
         const rect = tlWrap.getBoundingClientRect();
         if (rect.width <= 0) return;
-        const pct = Math.max(0, Math.min(1,
+        const pctF = Math.max(0, Math.min(1,
             (e.clientX - rect.left) / rect.width));
-        const loopMs =
-            parseInt(tlWrap.dataset.loopMs, 10) || 30000;
-        this._editDraft.wait_ms =
-            Math.max(0, Math.round(pct * loopMs));
+        const activeStart =
+            parseInt(tlWrap.dataset.activeStart, 10) || 0;
+        const activeEnd =
+            parseInt(tlWrap.dataset.activeEnd, 10) || 30000;
+        this._editDraft.wait_ms = this._stripPctToWaitMs(
+            pctF * 100, activeStart, activeEnd);
         this._syncTimingFromDraft();
       });
     }
