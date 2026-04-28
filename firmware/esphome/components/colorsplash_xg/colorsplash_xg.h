@@ -9,6 +9,10 @@
 #include "esphome/core/component.h"
 #include "esphome/core/preferences.h"
 
+namespace esphome {
+namespace light { class LightState; }
+}  // namespace esphome
+
 #include <deque>
 #include <functional>
 #include <string>
@@ -155,6 +159,18 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   //     "start_byte":N,"wait_ms":N}, ...]
   std::string color_presets_json() const;
 
+  // Pointer to the bridge's light entity, captured from the
+  // light component's setup_state() callback. Used by
+  // color_preset_recall() to republish the recalled RGB on the
+  // light entity so the JS card's cursor + bulb tint + RGB
+  // label reflect what the fixture is now displaying.
+  void set_light_state(light::LightState *state) {
+    this->light_state_ = state;
+  }
+  light::LightState *get_light_state() const {
+    return this->light_state_;
+  }
+
   // Most recent "preset" byte sent — one of the 12 visible effects
   // (0x01..0x0c). Used by the light entity to decide what to send
   // when HA requests ON without a selected effect. Not updated for
@@ -250,6 +266,8 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   void save_color_presets_();
   ColorPresetStore preset_store_{};
   ESPPreferenceObject preset_pref_;
+
+  light::LightState *light_state_{nullptr};
   std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 
   // Watchdog state — see PROTOCOL.md §Auto-reconnect (#12) for the

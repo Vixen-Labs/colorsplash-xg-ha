@@ -64,6 +64,14 @@ class ColorSplashLightOutput : public light::LightOutput {
 
   void write_state(light::LightState *state) override;
 
+  // Called once during light component init. Forward the
+  // pointer to the parent so color_preset_recall() can republish
+  // the recalled RGB on the light entity from outside the
+  // write_state path.
+  void setup_state(light::LightState *state) override {
+    this->parent_->set_light_state(state);
+  }
+
   void set_parent(ColorSplashXG *parent) { this->parent_ = parent; }
   void set_rgb_mode(bool rgb_mode) { this->rgb_mode_ = rgb_mode; }
 

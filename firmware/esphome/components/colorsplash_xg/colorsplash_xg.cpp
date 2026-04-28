@@ -4,6 +4,7 @@
 
 #include "esphome/components/esp32_ble_client/ble_characteristic.h"
 #include "esphome/components/esp32_ble_client/ble_descriptor.h"
+#include "esphome/components/light/light_state.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
@@ -724,6 +725,23 @@ bool ColorSplashXG::color_preset_recall(const std::string &slug) {
         const uint32_t wait_ms = slot.wait_ms;
         this->set_timeout("preset_lock", wait_ms, [this]() {
           this->send_effect_byte(0x0d);
+        });
+      }
+      // Republish the saved RGB on the light entity so the JS
+      // card's wheel cursor + bulb tint + RGB label reflect the
+      // recalled color. Deferred ~50ms so it doesn't race the
+      // BLE dispatch sequence above. Only runs if setup_state
+      // captured the LightState pointer (always does on a
+      // properly-initialized bridge).
+      if (this->light_state_ != nullptr) {
+        light::LightState *light = this->light_state_;
+        const uint8_t pr = slot.r, pg = slot.g, pb = slot.b;
+        App.scheduler.set_timeout(light, "preset_republish_rgb",
+            50, [light, pr, pg, pb]() {
+          light->remote_values.set_red(pr / 255.0f);
+          light->remote_values.set_green(pg / 255.0f);
+          light->remote_values.set_blue(pb / 255.0f);
+          light->publish_state();
         });
       }
       return true;
