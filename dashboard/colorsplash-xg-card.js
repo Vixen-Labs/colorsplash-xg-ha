@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.3";
+const VERSION = "0.9.4";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -1307,16 +1307,19 @@ class ColorSplashCard extends HTMLElement {
     //   - light is on with an rgb_color
     //   - the bridge has reported a recipe (picker has run)
     //   - no show effect is active
+    //   - the recipe didn't come from tapping a hardware solid
+    //     (solids fire a single byte with wait_ms=0; saving is
+    //     redundant since the user can just tap the built-in
+    //     swatch)
     //   - the current recipe doesn't already match a saved preset
-    //     (avoids double-saving the same recipe under a different
-    //     name; user wants the button to disappear post-save)
     const recipe = this._readCurrentRecipe();
     const haveRecipe = !!recipe;
+    const isSolidRecipe = recipe && recipe.wait_ms === 0;
     const alreadySaved = recipe && this._allPresets().some((p) =>
         p.start_byte === recipe.start_byte
         && p.wait_ms === recipe.wait_ms);
     const canSave = isOn && haveRecipe && rgbColor
-        && !hasEffect && !alreadySaved;
+        && !hasEffect && !isSolidRecipe && !alreadySaved;
     const saveBtn = canSave ? `
       <button class="save-preset-btn" data-action="save-preset">
         <ha-icon icon="mdi:bookmark-plus-outline"></ha-icon>
@@ -1528,11 +1531,11 @@ class ColorSplashCard extends HTMLElement {
   // ---- event handling ----
 
   async _onClick(e) {
-    if (this._suppressNextClick) {
-      this._suppressNextClick = false;
-      return;
-    }
     const t = e.target.closest("[data-action]");
+    console.info(
+        `[colorsplash-xg-card v${VERSION}] _onClick`,
+        {target: e.target, action: t && t.dataset.action,
+         dataset: t && {...t.dataset}});
     if (!t) return;
     const action = t.dataset.action;
     const cfg = this._config;
@@ -1541,9 +1544,6 @@ class ColorSplashCard extends HTMLElement {
       console.warn("[colorsplash-xg-card] hass not yet attached");
       return;
     }
-    console.info(
-        `[colorsplash-xg-card v${VERSION}] click action=${action}`,
-        {dataset: {...t.dataset}, light_entity: cfg.light_entity});
 
     // Any discrete action that changes fixture state invalidates
     // an in-flight debounced wheel/slider commit. save-preset
@@ -1816,24 +1816,27 @@ class ColorSplashCard extends HTMLElement {
       bright.addEventListener("pointercancel", (e) => this._onBrightUp(e));
     }
 
-    // Long-press on a user preset swatch → confirm + delete.
-    // Short taps fall through to the normal preset replay path
-    // (the click event bubbles up to shadowRoot's _onClick
-    // delegate). When a long-press fires the delete confirm, we
-    // set _suppressNextClick so the trailing click — which would
-    // otherwise replay the preset on its way out — is dropped.
+    // Long-press on a user preset swatch → opens the edit modal.
+    // Short taps still bubble normally to _onClick → preset case.
+    // We track longPressed in a closure local to the swatch and
+    // ATTACH A CLICK LISTENER ON THE SWATCH that swallows the
+    // trailing click only when longPressed is set. No class-level
+    // suppression flag, so there's no risk of leaking suppression
+    // across unrelated interactions.
     const userSwatches = this.shadowRoot.querySelectorAll(
         ".swatch.preset.user");
     userSwatches.forEach((sw) => {
       let pressTimer = null;
+      let longPressed = false;
       const cancel = () => {
         if (pressTimer) clearTimeout(pressTimer);
         pressTimer = null;
       };
       sw.addEventListener("pointerdown", () => {
+        longPressed = false;
         pressTimer = setTimeout(() => {
           pressTimer = null;
-          this._suppressNextClick = true;
+          longPressed = true;
           this._openEditModalForSwatch(sw);
         }, 600);
       });
@@ -1841,10 +1844,19 @@ class ColorSplashCard extends HTMLElement {
       sw.addEventListener("pointermove",   cancel);
       sw.addEventListener("pointerleave",  cancel);
       sw.addEventListener("pointercancel", cancel);
+      sw.addEventListener("click", (e) => {
+        if (longPressed) {
+          // Eat the trailing click after a long-press so it
+          // doesn't bubble to _onClick and replay the preset.
+          e.preventDefault();
+          e.stopPropagation();
+          longPressed = false;
+        }
+      });
       sw.addEventListener("contextmenu", (e) => {
         // Right-click on desktop also opens the edit modal.
         e.preventDefault();
-        this._suppressNextClick = true;
+        longPressed = true;
         this._openEditModalForSwatch(sw);
       });
     });
