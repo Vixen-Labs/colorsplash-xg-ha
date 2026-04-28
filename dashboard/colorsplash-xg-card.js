@@ -23,7 +23,7 @@
  * Resolves issue #41. See dashboard/README.md for install.
  */
 
-const VERSION = "0.9.4";
+const VERSION = "0.9.5";
 
 // 5 documented solid presets, in rainbow order with white at
 // the front. Return badge follows the swatches in _buildHTML.
@@ -1618,9 +1618,17 @@ class ColorSplashCard extends HTMLElement {
           console.warn("preset index out of range", idx);
           break;
         }
+        // Do NOT follow the recall with light.turn_on(effect:None).
+        // ESPHome's light component re-runs write_state on every
+        // turn_on call and will pick_color() against the cached
+        // rgb_color from the previous user action — which dispatches
+        // a fresh byte and stomps the preset's Nova/Tidal/etc.
+        // start that's already in flight. The bridge handles the
+        // full sequence (start_byte → set_timeout(wait_ms) →
+        // Lock byte) inside color_preset_recall; the card has
+        // nothing to add.
         try {
           if (p._user && p.slug) {
-            // Bridge-stored preset → addressable by slug
             await this._callService(cfg.preset_recall_service,
                                     {slug: p.slug});
           } else {
@@ -1630,8 +1638,6 @@ class ColorSplashCard extends HTMLElement {
               wait_ms: p.wait_ms | 0,
             });
           }
-          await hass.callService("light", "turn_on",
-              {entity_id: cfg.light_entity, effect: "None"});
         } catch (err) {
           console.error("preset replay failed:", err);
         }
