@@ -276,8 +276,6 @@ bool ColorSplashXG::gattc_event_handler(esp_gattc_cb_event_t event,
                  "indication echo 0x%02x (%s)",
                  echo,
                  name ? name : "unrecognized opcode");
-        for (auto &cb : this->on_echo_callbacks_)
-          cb(echo);
       }
       break;
     }
@@ -420,66 +418,6 @@ void ColorSplashXG::try_drain_pending_() {
   this->last_command_name_ = formatted;
   ESP_LOGI(TAG, "sent byte 0x%02x (%s)",
            byte_value, name ? name : "raw");
-}
-
-void ColorSplashXG::probe_write_raw(
-    const std::vector<uint8_t> &bytes) {
-  // Phase 4a: experimentally write a multi-byte payload to the
-  // command characteristic. The documented protocol is strictly
-  // single-byte; the goal here is to discover whether the
-  // controller exposes any parameterised commands (e.g. a 3-byte
-  // RGB write) on the same handle.
-  if (!this->cccd_armed_) {
-    ESP_LOGW(TAG, "probe_write_raw: BLE not ready; skipping");
-    return;
-  }
-  if (this->write_in_flight_) {
-    ESP_LOGW(TAG,
-             "probe_write_raw: write in flight; skipping (try again)");
-    return;
-  }
-  if (bytes.empty() || bytes.size() > 20) {
-    ESP_LOGW(TAG,
-             "probe_write_raw: invalid length %u (must be 1..20)",
-             static_cast<unsigned>(bytes.size()));
-    return;
-  }
-
-  // esp_ble_gattc_write_char takes a non-const pointer; copy into
-  // a local mutable buffer to satisfy the API without const-cast.
-  uint8_t buf[20];
-  std::memcpy(buf, bytes.data(), bytes.size());
-
-  esp_err_t err = esp_ble_gattc_write_char(
-      this->get_gattc_if(), this->get_conn_id(),
-      this->cmd_char_handle_, bytes.size(), buf,
-      ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG,
-             "probe_write_raw: esp_ble_gattc_write_char failed err=%d",
-             err);
-    return;
-  }
-  this->write_in_flight_ = true;
-  this->total_commands_++;
-
-  // Format the bytes as space-separated hex for both the log and
-  // the HA `last_command_name` text sensor.
-  char hex[3 * 20 + 1];  // up to 20 bytes × "XX " + NUL
-  size_t off = 0;
-  for (size_t i = 0; i < bytes.size(); i++) {
-    off += std::snprintf(hex + off, sizeof(hex) - off,
-                         (i + 1 == bytes.size()) ? "%02x" : "%02x ",
-                         bytes[i]);
-  }
-  ESP_LOGI(TAG, "probe sent %u bytes: %s",
-           static_cast<unsigned>(bytes.size()), hex);
-
-  char formatted[80];
-  std::snprintf(formatted, sizeof(formatted),
-                "raw[%u] %s",
-                static_cast<unsigned>(bytes.size()), hex);
-  this->last_command_name_ = formatted;
 }
 
 // Phase 4b show-scrub picker. Searches the embedded LUT for the

@@ -14,9 +14,7 @@ namespace light { class LightState; }
 }  // namespace esphome
 
 #include <deque>
-#include <functional>
 #include <string>
-#include <vector>
 
 namespace esphome {
 namespace colorsplash_xg {
@@ -93,15 +91,6 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // Public API — used by YAML lambdas and the light entity in #11.
   void send_effect_byte(uint8_t byte_value);
 
-  // Phase 4a probe escape hatch: write an arbitrary byte sequence
-  // to the command characteristic, bypassing the single-byte queue.
-  // Intended only for the RGB-experiment workflow (multi-byte
-  // writes to test whether the controller accepts parameterised
-  // commands). Drops the request if the link is not ready or a
-  // previous write is still in flight; logs the byte sequence at
-  // INFO level so probe runs are reproducible from the log.
-  void probe_write_raw(const std::vector<uint8_t> &bytes);
-
   // Phase 4b show-scrub picker. Result of looking up a target RGB
   // in the embedded calibration LUT. See show_color_lut.h.
   struct PickRecipe {
@@ -132,7 +121,6 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // exactly reachable by the LUT).
   PickRecipe pick_color(uint8_t r, uint8_t g, uint8_t b);
 
-  bool is_ready() const { return this->cccd_armed_; }
   optional<uint8_t> last_echoed_byte() const { return this->last_echoed_; }
 
   // Most recent recipe returned by pick_color(). The card reads
@@ -227,15 +215,10 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   void gap_event_handler(esp_gap_ble_cb_event_t event,
                          esp_ble_gap_cb_param_t *param) override;
 
-  // Subscribe to every indication echo from the controller. Invoked
-  // from the BLE stack context; downstream code should treat the
-  // callback as best-effort and avoid long-running work inside it.
-  void add_on_echo_callback(std::function<void(uint8_t)> &&cb) {
-    this->on_echo_callbacks_.push_back(std::move(cb));
-  }
-
-  // Optional YAML override for environments with multiple BGScripr
-  // peripherals in range.
+  // Optional YAML override (`mac_address:` on the colorsplash_xg
+  // component) for environments with multiple BGScripr peripherals
+  // in range. When unset, the BLE scanner matches the first
+  // advertiser whose local name equals BGScripr.
   void set_mac_override(uint64_t mac) { this->mac_override_ = mac; }
 
  protected:
@@ -282,7 +265,6 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   ESPPreferenceObject preset_pref_;
 
   light::LightState *light_state_{nullptr};
-  std::vector<std::function<void(uint8_t)>> on_echo_callbacks_;
 
   // Watchdog state — see PROTOCOL.md §Auto-reconnect (#12) for the
   // backoff table + reboot policy.
