@@ -120,8 +120,16 @@ api:
                 slug, name,
                 (uint8_t) red, (uint8_t) green, (uint8_t) blue,
                 (uint8_t) start_byte, (uint32_t) wait_ms);
-            id(pool_color_presets).publish_state(
-                id(xg).color_presets_json());
+            // Republish all 5 indexed slot sensors + count.
+            // Count published LAST so the card never sees count=N
+            // pointing at a slot whose state hasn't propagated.
+            id(pool_color_preset_0).publish_state(id(xg).preset_at_json(0));
+            id(pool_color_preset_1).publish_state(id(xg).preset_at_json(1));
+            id(pool_color_preset_2).publish_state(id(xg).preset_at_json(2));
+            id(pool_color_preset_3).publish_state(id(xg).preset_at_json(3));
+            id(pool_color_preset_4).publish_state(id(xg).preset_at_json(4));
+            id(pool_color_preset_count).publish_state(
+                (float) id(xg).preset_count());
 
     - service: color_preset_recall
       variables:
@@ -135,8 +143,15 @@ api:
       then:
         - lambda: |-
             id(xg).color_preset_delete(slug);
-            id(pool_color_presets).publish_state(
-                id(xg).color_presets_json());
+            // Republish all 5 slot sensors + count (delete shifts
+            // entries down, so multiple slot states change).
+            id(pool_color_preset_0).publish_state(id(xg).preset_at_json(0));
+            id(pool_color_preset_1).publish_state(id(xg).preset_at_json(1));
+            id(pool_color_preset_2).publish_state(id(xg).preset_at_json(2));
+            id(pool_color_preset_3).publish_state(id(xg).preset_at_json(3));
+            id(pool_color_preset_4).publish_state(id(xg).preset_at_json(4));
+            id(pool_color_preset_count).publish_state(
+                (float) id(xg).preset_count());
 
 ota:
   - platform: esphome
@@ -305,15 +320,44 @@ text_sensor:
                     rec->start_byte, (unsigned) rec->wait_ms);
       return std::string(buf);
 
-  # Saved color preset table — JSON array (issue #53). The
-  # color_preset_save / color_preset_delete services publish
-  # the new value immediately; this update_interval is the
-  # fallback for any drift across browser refreshes.
+  # Saved color preset table (issues #53, #65). Each preset slot
+  # is exposed as its own text_sensor so each entity's state
+  # stays well under HA's 255-char ceiling — no JSON truncation,
+  # no silent disappearance regardless of slug / name length.
+  # The card aggregates these 5 slots into the swatch row.
+  # All marked entity_category: diagnostic so they hide from the
+  # default dashboard view but remain visible on the bridge
+  # device page in Settings → Devices & Services.
   - platform: template
-    name: "Pool Color Presets"
-    id: pool_color_presets
+    name: "Pool Color Preset 0"
+    id: pool_color_preset_0
+    entity_category: diagnostic
     update_interval: 30s
-    lambda: 'return id(xg).color_presets_json();'
+    lambda: 'return id(xg).preset_at_json(0);'
+  - platform: template
+    name: "Pool Color Preset 1"
+    id: pool_color_preset_1
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: 'return id(xg).preset_at_json(1);'
+  - platform: template
+    name: "Pool Color Preset 2"
+    id: pool_color_preset_2
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: 'return id(xg).preset_at_json(2);'
+  - platform: template
+    name: "Pool Color Preset 3"
+    id: pool_color_preset_3
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: 'return id(xg).preset_at_json(3);'
+  - platform: template
+    name: "Pool Color Preset 4"
+    id: pool_color_preset_4
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: 'return id(xg).preset_at_json(4);'
 
 # Numeric diagnostics (#13). RSSI is polled every 30 s while
 # connected; the two counters are monotonic-within-session totals
@@ -345,6 +389,17 @@ sensor:
     accuracy_decimals: 0
     update_interval: 30s
     lambda: 'return (float) id(xg).total_errors();'
+
+  # Number of saved user presets, 0..MAX_COLOR_PRESETS (#65). Card
+  # uses this as the source of truth for which indexed slots to
+  # iterate.
+  - platform: template
+    name: "Pool Color Preset Count"
+    id: pool_color_preset_count
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: 'return (float) id(xg).preset_count();'
 
 # ─── Phase 4b PoC — show-scrub primitive ─────────────────────────
 # Triggered by the `pool_scrub` HA service defined under api.services
