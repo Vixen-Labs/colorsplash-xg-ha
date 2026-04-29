@@ -1,11 +1,18 @@
 # colorsplash-xg-ha
 
-Home Assistant control for the **Hayward / J&J Electronics
-ColorSplash XG** pool light controller (LPL-XG-CTRL-1) via a
+Home Assistant control for the **Hayward® / J&J Electronics™
+ColorSplash® XG** pool light controller (LPL-XG-CTRL-1) via a
 small ESP32 BLE bridge. Two variants ship: a primary **headless
 bridge** that puts the user-facing UI in Home Assistant, and a
 **display variant** with a 7" LVGL touchscreen on the wall
-(preserved at tag `v0.1.0-display`).
+(preserved at tag `v0.1.0-display`, but is not up to date with
+the improvements in the headless version).
+
+_Hayward®, J&J Electtonics™, and ColorSplash® are trademarks of
+Hayward Industries, Inc.. This project is not affiliated with
+Hayward in any way, and the entire purpose of this software is
+to provide interoperation with [Home Assistant](https://www.home-assistant.io/), a project from
+the [Open Home Foundation](https://www.openhomefoundation.org/)._
 
 ## Purpose
 
