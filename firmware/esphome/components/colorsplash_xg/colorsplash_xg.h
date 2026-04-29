@@ -37,13 +37,21 @@ constexpr const char *COMMAND_CHAR_UUID_STR =
 // Standard Bluetooth SIG Client Characteristic Configuration.
 constexpr uint16_t CCCD_UUID_U16 = 0x2902;
 
-// User-defined color preset table (issue #53). Presets live in
-// NVS so they survive bridge reboots and are addressable by HA
-// automations via the color_preset_recall service. The hex
-// fields are stored alongside the (start_byte, wait_ms) recipe
-// so HA / the JS card can render a preview swatch without re-
-// querying the original RGB target.
-constexpr size_t MAX_COLOR_PRESETS = 20;
+// User-defined color preset table (issue #53, capped at 5 in #65).
+// Presets live in NVS so they survive bridge reboots and are
+// addressable by HA automations via the color_preset_recall
+// service. The hex fields are stored alongside the (start_byte,
+// wait_ms) recipe so HA / the JS card can render a preview swatch
+// without re-querying the original RGB target.
+//
+// MAX_COLOR_PRESETS was 20 prior to #65; lowered to 5 because the
+// per-preset JSON is now published as one indexed text_sensor per
+// slot to sidestep HA's 255-char state-value cap. The magic
+// sentinel was bumped at the same time so existing NVS data from
+// the old 20-slot schema fails to load and the store re-inits
+// empty (size mismatch would force this anyway; magic bump makes
+// the intent explicit).
+constexpr size_t MAX_COLOR_PRESETS = 5;
 struct ColorPreset {
   char     slug[16];   // automation-addressable id [a-z0-9_-]
   char     name[32];   // human display label
@@ -56,7 +64,7 @@ struct ColorPresetStore {
   uint32_t    count;
   ColorPreset entries[MAX_COLOR_PRESETS];
 };
-constexpr uint32_t COLOR_PRESET_MAGIC = 0xC050E751;
+constexpr uint32_t COLOR_PRESET_MAGIC = 0xC050E752;
 
 // Single-byte value written to the CCCD to enable indications (not
 // notifications) on the command characteristic. See
@@ -153,11 +161,17 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   // Remove from NVS. Returns false if not found.
   bool color_preset_delete(const std::string &slug);
 
-  // Serialize all presets to a JSON array string for the
-  // pool_color_presets text_sensor. Format:
-  //   [{"slug":"...","name":"...","hex":"#rrggbb",
-  //     "start_byte":N,"wait_ms":N}, ...]
-  std::string color_presets_json() const;
+  // Multi-sensor preset accessors (#65). Each preset slot is
+  // exposed as its own text_sensor in YAML so each entity's
+  // state stays well under HA's 255-char ceiling — no JSON
+  // truncation, no silent disappearance regardless of slug /
+  // name length.
+  size_t preset_count() const { return this->preset_store_.count; }
+  // Returns the JSON object for the preset at `idx`, or empty
+  // string if `idx >= count`. Format:
+  //   {"slug":"...","name":"...","hex":"#rrggbb",
+  //    "start_byte":N,"wait_ms":N}
+  std::string preset_at_json(size_t idx) const;
 
   // Pointer to the bridge's light entity, captured from the
   // light component's setup_state() callback. Used by

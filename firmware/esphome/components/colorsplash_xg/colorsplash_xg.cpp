@@ -793,24 +793,19 @@ bool ColorSplashXG::color_preset_delete(const std::string &slug) {
   return false;
 }
 
-std::string ColorSplashXG::color_presets_json() const {
-  std::string out = "[";
-  for (size_t i = 0; i < this->preset_store_.count; i++) {
-    const ColorPreset &slot = this->preset_store_.entries[i];
-    if (i > 0) out += ',';
-    char buf[160];
-    std::snprintf(buf, sizeof(buf),
-                  "{\"slug\":\"%s\",\"name\":\"%s\","
-                  "\"hex\":\"#%02x%02x%02x\","
-                  "\"start_byte\":%u,\"wait_ms\":%u}",
-                  slot.slug, slot.name,
-                  slot.r, slot.g, slot.b,
-                  (unsigned) slot.start_byte,
-                  (unsigned) slot.wait_ms);
-    out += buf;
-  }
-  out += "]";
-  return out;
+std::string ColorSplashXG::preset_at_json(size_t idx) const {
+  if (idx >= this->preset_store_.count) return std::string();
+  const ColorPreset &slot = this->preset_store_.entries[idx];
+  char buf[160];
+  std::snprintf(buf, sizeof(buf),
+                "{\"slug\":\"%s\",\"name\":\"%s\","
+                "\"hex\":\"#%02x%02x%02x\","
+                "\"start_byte\":%u,\"wait_ms\":%u}",
+                slot.slug, slot.name,
+                slot.r, slot.g, slot.b,
+                (unsigned) slot.start_byte,
+                (unsigned) slot.wait_ms);
+  return std::string(buf);
 }
 
 }  // namespace colorsplash_xg
