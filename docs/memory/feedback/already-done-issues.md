@@ -1,7 +1,5 @@
 ---
-name: Handling already-complete issues in /ghfix
-description: When an issue targeted by /ghfix is already done, offer close-only path before running the workflow
-type: feedback
+name: Handling already-complete issues in /ghfix description: When an issue targeted by /ghfix is already done, offer close-only path before running the workflow type: feedback
 ---
 
 When `/ghfix N` targets an issue whose acceptance criteria are already met (e.g., issue body has checked boxes or says "Closing as completed by commit X"), do **not** enter the full branch/test/PR workflow. Instead, present the user a short numbered menu:

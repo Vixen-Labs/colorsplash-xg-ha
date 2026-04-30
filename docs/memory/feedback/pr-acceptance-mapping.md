@@ -1,7 +1,5 @@
 ---
-name: PR body format for partial-completion issues
-description: When a PR closes some but not all acceptance criteria, mirror the criteria as a checklist in the PR body and call out deferred items
-type: feedback
+name: PR body format for partial-completion issues description: When a PR closes some but not all acceptance criteria, mirror the criteria as a checklist in the PR body and call out deferred items type: feedback
 ---
 
 For PRs in `colorsplash-xg-ha` that address a GitHub issue with a checkbox acceptance list, the PR body should:

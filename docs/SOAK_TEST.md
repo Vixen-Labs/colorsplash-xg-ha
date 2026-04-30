@@ -1,16 +1,11 @@
 # Phase 2 #13 — 72-hour soak test
 
-Documents the continuous-connection soak test required by issue #13's
-acceptance criteria. The run exercises the bridge under normal-use
-conditions for ≥72 hours to surface slow bugs (memory leaks, rare
-races, thermal effects, cumulative disconnects) that a quick
-functional test can't catch.
+Documents the continuous-connection soak test required by issue #13's acceptance criteria. The run exercises the bridge under normal-use conditions for ≥72 hours to surface slow bugs (memory leaks, rare races, thermal effects, cumulative disconnects) that a quick functional test can't catch.
 
 ## How to run
 
 1. Flash the current `phase2/*` or `main` firmware build via OTA.
-2. Start an unattended log capture on a machine that can stay
-   connected to the LAN for 72 hours:
+2. Start an unattended log capture on a machine that can stay connected to the LAN for 72 hours:
    ```sh
    mkdir -p captures
    esphome logs firmware/esphome/colorsplash-xg.yaml \
@@ -18,15 +13,12 @@ functional test can't catch.
        > captures/soak-$(date +%Y-%m-%d).log 2>&1 &
    disown
    ```
-3. Do not manually intervene with the ESP32 or the ColorSplash
-   controller during the window. Normal HA-side use (toggling the
-   light, picking effects) is expected.
+3. Do not manually intervene with the ESP32 or the ColorSplash controller during the window. Normal HA-side use (toggling the light, picking effects) is expected.
 4. After ≥72 hours, stop the log capture and produce the report:
    ```sh
    python tools/soak_report.py captures/soak-YYYY-MM-DD.log
    ```
-5. Paste the report into the **Results** section below and open a
-   follow-up PR to close #13.
+5. Paste the report into the **Results** section below and open a follow-up PR to close #13.
 
 ## Run parameters
 
@@ -54,8 +46,7 @@ The bridge exposes these diagnostic entities to HA (all from #12 + #13):
 - `sensor.pool_command_count` — monotonic total of sent bytes (resets on reboot)
 - `sensor.pool_error_count` — monotonic total of BLE failures (resets on reboot)
 
-HA's recorder captures their history over the soak window as a
-second data source, complementary to the log capture.
+HA's recorder captures their history over the soak window as a second data source, complementary to the log capture.
 
 ## Acceptance criteria
 
@@ -106,25 +97,8 @@ Generated with `python3 tools/soak_report.py captures/soak-2026-04-20.log`:
 
 ## Deviations / notes
 
-**Zero disconnects across 72 hours.** The watchdog backoff and
-reboot paths in `colorsplash_xg.cpp` never fired — they're latent
-fail-safes. The 1:1 send/echo ratio (28/28) means every command
-the user issued during the window was both transmitted and
-confirmed by the controller at the BLE layer.
+**Zero disconnects across 72 hours.** The watchdog backoff and reboot paths in `colorsplash_xg.cpp` never fired — they're latent fail-safes. The 1:1 send/echo ratio (28/28) means every command the user issued during the window was both transmitted and confirmed by the controller at the BLE layer.
 
-**End-of-run RSSI −83 dBm** is significantly weaker than the −56
-to −66 dBm we saw during the #12 10-trial watchdog test. The ESP
-was in a more favourable location during that test; the final
-indoor install spot is at the edge of what `docs/PLAN.md` §Named
-risks #2 flagged as the repeater threshold. **Despite the marginal
-signal, the link stayed healthy for 72 continuous hours.** This
-is strong evidence the current placement is viable without a BLE
-proxy — issue #42 (indoor-range investigation) can be closed
-without further work.
+**End-of-run RSSI −83 dBm** is significantly weaker than the −56 to −66 dBm we saw during the #12 10-trial watchdog test. The ESP was in a more favourable location during that test; the final indoor install spot is at the edge of what `docs/PLAN.md` §Named risks #2 flagged as the repeater threshold. **Despite the marginal signal, the link stayed healthy for 72 continuous hours.** This is strong evidence the current placement is viable without a BLE proxy — issue #42 (indoor-range investigation) can be closed without further work.
 
-**Command-mix observations:** the user exercised a broad subset of
-opcodes during the window — 5 solids (including the new Miami Pink
-`0x0c` via button entity), 2 shows (Super Nova `0x02`, Tidal Wave
-`0x04`), plus Standby / Lock / Return. No unexpected opcodes
-appeared in the byte histogram; the protocol table in
-`docs/PROTOCOL.md` is complete as-is.
+**Command-mix observations:** the user exercised a broad subset of opcodes during the window — 5 solids (including the new Miami Pink `0x0c` via button entity), 2 shows (Super Nova `0x02`, Tidal Wave `0x04`), plus Standby / Lock / Return. No unexpected opcodes appeared in the byte histogram; the protocol table in `docs/PROTOCOL.md` is complete as-is.
