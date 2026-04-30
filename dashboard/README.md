@@ -200,6 +200,69 @@ The empty-state hint and the manual-config workflow are
 placeholders until [issue #53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53)
 lands a save-from-color-wheel UI.
 
+### Bind a preset to a scene
+
+HA scenes capture entity state — `rgb_color`, `brightness`, etc.
+They don't capture the bridge's recipe (`start_byte` + `wait_ms`).
+A scene saved while the pool light shows a preset re-applies via
+`light.turn_on(rgb_color=…)`, which routes through the bridge's
+LUT picker on activation and may produce a *different* recipe
+that lands at a similar color. Fine for solid-ish colors;
+noticeable drift on shows mid-fade.
+
+This repo ships a HA blueprint that bridges the gap. It listens
+for a chosen scene's `scene.turn_on` event and replays the exact
+recipe via the bridge's `color_preset_recall` service.
+
+**One-time setup. Pick whichever installation path matches your situation:**
+
+#### Path 1 — manual file copy (works for private repos)
+
+Copy the blueprint into HA's blueprints directory:
+
+```bash
+# From your HA config root (e.g. /config or ~/.homeassistant)
+mkdir -p blueprints/automation/colorsplash_xg
+cp /path/to/colorsplash-xg-ha/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml \
+   blueprints/automation/colorsplash_xg/
+```
+
+Then HA → Developer Tools → YAML → "Reload Blueprints" (or
+restart HA). The blueprint will appear under Settings →
+Automations & Scenes → Blueprints.
+
+#### Path 2 — import from URL (once the repo is public)
+
+In HA → Settings → Automations & Scenes → Blueprints, click
+"Import Blueprint" and paste:
+
+```
+https://github.com/swizzlevixen/colorsplash-xg-ha/blob/main/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml
+```
+
+#### After installation (either path)
+
+1. Click "Use this blueprint", choose the scene to listen for and
+   the slug of your saved preset, and (optionally) tune the
+   `recall_delay_ms` if you see a brief flicker before the preset
+   color settles.
+
+2. **Recommended:** remove `light.pool_light` from the scene's
+   entity list. The blueprint handles the bridge separately, so
+   leaving the light in the scene only causes a brief
+   LUT-picked color to flash before the recipe replay wins.
+
+If you'd rather skip the blueprint UI and just call the recall
+service directly, see the script-style example in
+[`automations.yaml`](./automations.yaml#L165) under "Pool: recall
+a saved preset by slug".
+
+A native-scene integration via a `select.pool_active_preset`
+entity is tracked in
+[#73](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/73)
+for post-1.0.0; that path will let scenes capture the preset
+selection directly without the blueprint shim.
+
 ### Custom card preview
 
 ```
