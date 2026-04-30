@@ -368,7 +368,7 @@ Each write row is `<epoch>\t<byte-hex>` and maps to the opcode table in [`docs/P
 
 ## Appendix — action inventory
 
-The exact list of actions a capture session must exercise lives in issue [#5 — Phase 1: Structured capture sweep of every app action](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/5). That issue is the source of truth; a brief summary here so you don't have to context-switch:
+The exact list of actions a capture session must exercise lives in issue [#5 — Phase 1: Structured capture sweep of every app action](https://github.com/Vixen-Labs/colorsplash-xg-ha/issues/5). That issue is the source of truth; a brief summary here so you don't have to context-switch:
 
 1. App cold-launch with controller unpaired / factory-new (capture the pairing exchange).
 2. Tap **Status** card → **Select device** sheet → **Connect to XG controller**.
