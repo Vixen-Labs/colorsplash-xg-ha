@@ -80,7 +80,7 @@ A few user-facing facts worth knowing up-front. The longer methodology / enginee
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     Controller["J&amp;J LPL-XG-CTRL-1<br>Bluetooth pool-light controller"]
     Bridge["ESP32-WROOM-32<br>colorsplash_xg ESPHome firmware"]
     HA["Home Assistant<br>same LAN"]
