@@ -180,88 +180,58 @@ card mount, so you can verify what's actually loaded:
 
 ### Saved Presets
 
-The custom card reserves a "Saved Presets" section between the
-Colors and Shows rows, populated from the card's `presets:`
-YAML option. Each preset is a `(start_byte, wait_ms)` recipe
-with a display name and swatch color:
+User presets live in the bridge's NVS (5 slots max), addressable
+by slug. Save one by dragging the card's color wheel until the
+fixture lands on a color you like, then tap "Save current color
+as preset…" — the card stores the bridge's resolved recipe
+`(start_byte, wait_ms)` plus an RGB preview, and the result
+shows up as a swatch in the row.
+
+Card-side, the swatches are populated by reading the bridge's
+per-slot text_sensors (`sensor.<prefix>pool_color_preset_0..4`)
+plus an optional static `presets:` YAML list for read-only
+recipes you want to ship in your config:
 
 ```yaml
 type: custom:colorsplash-xg-card
 presets:
   - {name: "Sunset Magenta", hex: "#dc6b9c", start_byte: 5, wait_ms: 7000}
-  - {name: "Pool Cyan",      hex: "#5fa8c4", start_byte: 4, wait_ms: 15788}
 ```
 
-When tapped, the card calls the bridge's `pool_scrub` service
-(`esphome.colorsplash_xg_bridge_pool_scrub`) with the recipe
-values. The bridge sends the start byte, waits, then sends Lock.
-
-The empty-state hint and the manual-config workflow are
-placeholders until [issue #53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53)
-lands a save-from-color-wheel UI.
+Tapping a preset swatch calls `color_preset_recall(slug)` for
+user presets, or `pool_scrub(start_byte, wait_ms)` for static
+YAML presets. The currently-active user preset gets a halo on
+its swatch, driven by `select.pool_active_preset`'s state.
 
 ### Bind a preset to a scene
 
-HA scenes capture entity state — `rgb_color`, `brightness`, etc.
-They don't capture the bridge's recipe (`start_byte` + `wait_ms`).
-A scene saved while the pool light shows a preset re-applies via
-`light.turn_on(rgb_color=…)`, which routes through the bridge's
-LUT picker on activation and may produce a *different* recipe
-that lands at a similar color. Fine for solid-ish colors;
-noticeable drift on shows mid-fade.
+The bridge exposes a `select.pool_active_preset` entity whose
+options mirror the slugs of every saved preset. HA scenes
+natively capture select-entity state, so binding a preset to a
+scene is just listing it in the scene's entities:
 
-This repo ships a HA blueprint that bridges the gap. It listens
-for a chosen scene's `scene.turn_on` event and replays the exact
-recipe via the bridge's `color_preset_recall` service.
-
-**One-time setup. Pick whichever installation path matches your situation:**
-
-#### Path 1 — manual file copy (works for private repos)
-
-Copy the blueprint into HA's blueprints directory:
-
-```bash
-# From your HA config root (e.g. /config or ~/.homeassistant)
-mkdir -p blueprints/automation/colorsplash_xg
-cp /path/to/colorsplash-xg-ha/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml \
-   blueprints/automation/colorsplash_xg/
+```yaml
+scene:
+  - name: Pool Sunset
+    entities:
+      select.colorsplash_xg_bridge_pool_active_preset:
+        option: sunset_magenta
 ```
 
-Then HA → Developer Tools → YAML → "Reload Blueprints" (or
-restart HA). The blueprint will appear under Settings →
-Automations & Scenes → Blueprints.
+When the scene activates, HA calls `select.select_option`, which
+the bridge translates into `color_preset_recall(slug=…)` —
+firing the exact stored `(start_byte, wait_ms)` recipe. No
+LUT round-trip, no recipe drift.
 
-#### Path 2 — import from URL (once the repo is public)
+The select's option list refreshes whenever you save or delete a
+preset via the card. The `(none)` sentinel is a no-op option:
+including it in a scene clears the "active preset" state without
+changing what the fixture is currently showing.
 
-In HA → Settings → Automations & Scenes → Blueprints, click
-"Import Blueprint" and paste:
-
-```
-https://github.com/swizzlevixen/colorsplash-xg-ha/blob/main/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml
-```
-
-#### After installation (either path)
-
-1. Click "Use this blueprint", choose the scene to listen for and
-   the slug of your saved preset, and (optionally) tune the
-   `recall_delay_ms` if you see a brief flicker before the preset
-   color settles.
-
-2. **Recommended:** remove `light.pool_light` from the scene's
-   entity list. The blueprint handles the bridge separately, so
-   leaving the light in the scene only causes a brief
-   LUT-picked color to flash before the recipe replay wins.
-
-If you'd rather skip the blueprint UI and just call the recall
-service directly, see the script-style example in
-[`automations.yaml`](./automations.yaml#L165) under "Pool: recall
-a saved preset by slug".
-
-A native-scene integration via a `select.pool_active_preset`
-entity is tracked in
-[#73](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/73)
-for post-1.0.0; that path will let scenes capture the preset
-selection directly without the blueprint shim.
+For combining a preset with hardware-effect or on/off state in
+the same scene, just list both entities — the light handles
+on/off + the 12 hardware effects (5 solids + 7 shows), and the
+select handles user presets.
 
 ### Custom card preview
 

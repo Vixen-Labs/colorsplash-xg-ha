@@ -86,25 +86,19 @@ That said, if you already have this hardware, and are looking to make the best o
   pad for best BLE link margin.
 - No display, no LVGL — Home Assistant is the user-facing UI via
   the dashboard card above.
-- **Optional experimental RGB picker (Phase 4b).** When
-  `rgb_mode: true` is set on the `light:` config, HA's standard
-  light card gains a color wheel that drives the bridge's
-  embedded show-scrub picker. Default off because the reachable
-  color gamut is constrained (some target RGBs land
-  approximately, not exactly). To toggle, edit the headless YAML's
-  `light:` block:
-  ```yaml
-  light:
-    - platform: colorsplash_xg
-      # ...
-      rgb_mode: true   # experimental color wheel
-      # rgb_mode: false  # classic on/off + named effects only (default)
-  ```
-  Re-flash the bridge, then reload the ESPHome integration in HA
-  so it picks up the new color-mode advertisement. See
-  [issue #54](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/54)
-  for the full design + the future preset-card path
-  ([#53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53)).
+- **The light entity is on/off + 12 effects** (5 solids + 7
+  shows). No `rgb_color` slider in HA, because the hardware can't
+  emit arbitrary RGB — the experimental color picker stays in the
+  JS card where its "approximate match via LUT" framing is honest
+  ([#75](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/75)).
+- **User-saved presets bind to scenes via** `select.pool_active_preset`
+  ([#73](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/73)).
+  Drop the entity into a scene with `option: <slug>` and HA
+  re-fires the exact stored recipe on activation.
+- **Power users can opt back into HA-native RGB** by setting
+  `rgb_mode: true` on the light's YAML config. The light then
+  advertises ColorMode::RGB and HA's color wheel drives the
+  bridge's embedded picker. Default off.
 
 ### Display variant
 

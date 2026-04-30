@@ -1,13 +1,10 @@
-"""Cross-verify the ESPHome light platform's show + solid tables.
+"""Cross-verify the ESPHome light platform's effect tables.
 
-The custom light platform splits the 12 canonical non-control
-effects into two lists:
+The custom light platform exposes all 12 selectable hardware
+states as effects, split into two lists for documentation:
 
-- ``SOLID_COLORS`` — 5 entries, each carrying (name, byte, RGB).
-  Surfaced as color-picker targets (HA's color picker snaps to
-  the nearest of these 5 solids).
-- ``SHOW_EFFECTS`` — 7 entries, each carrying (name, byte).
-  Surfaced as light effects in HA's effect dropdown.
+- ``SOLID_EFFECTS`` — 5 entries, (name, byte) for the solid colors.
+- ``SHOW_EFFECTS`` — 7 entries, (name, byte) for the show animations.
 
 Together they must equal the 12 canonical effects in
 ``tools/cli.py`` — no more, no fewer. Lock (0x0D), Return (0x0E),
@@ -38,25 +35,17 @@ LIGHT_INIT_PATH = (
     / "__init__.py"
 )
 
-# Matches SHOW_EFFECTS entries like:   ("Nova", 0x07),
-_SHOW_RE = re.compile(
+# Matches (name, byte) entries like:   ("Nova", 0x07),
+_ENTRY_RE = re.compile(
     r'\(\s*"([^"]+)"\s*,\s*(0x[0-9a-fA-F]+)\s*\)',
 )
 
-# Matches SOLID_COLORS entries like:
-#   ("Parisian Blue",  0x08, (0x00, 0x00, 0xFF)),
-_SOLID_RE = re.compile(
-    r'\(\s*"([^"]+)"\s*,\s*(0x[0-9a-fA-F]+)\s*,\s*'
-    r'\(\s*0x([0-9a-fA-F]+)\s*,\s*0x([0-9a-fA-F]+)\s*,\s*0x([0-9a-fA-F]+)\s*\)'
-    r'\s*\)',
-)
-
 EXPECTED_SOLIDS: list[tuple[str, int]] = [
-    ("Parisian Blue",      0x08),
-    ("Brazilian Red",      0x0A),
     ("Arctic White",       0x0B),
-    ("Miami Pink",         0x0C),
+    ("Brazilian Red",      0x0A),
     ("New Zealand Green",  0x09),
+    ("Parisian Blue",      0x08),
+    ("Miami Pink",         0x0C),
 ]
 
 EXPECTED_SHOWS: list[tuple[str, int]] = [
@@ -69,8 +58,8 @@ EXPECTED_SHOWS: list[tuple[str, int]] = [
     ("Peruvian Paradise",  0x01),
 ]
 
-# Bytes that must NOT appear as effects OR as solid color presets —
-# they map to other UI surfaces.
+# Bytes that must NOT appear as effects — they map to other UI
+# surfaces.
 EXCLUDED_BYTES: dict[int, str] = {
     0x00: "Standby (on/off semantics)",
     0x0D: "Lock (exposed as button entity)",
@@ -101,28 +90,19 @@ def _section(text: str, var_name: str) -> str:
     return text[m.end() - 1:i]
 
 
-def _parse_shows(text: str) -> list[tuple[str, int]]:
-    block = _section(text, "SHOW_EFFECTS")
-    return [(name, int(b, 16)) for name, b in _SHOW_RE.findall(block)]
-
-
-def _parse_solids(text: str) -> list[tuple[str, int, tuple[int, int, int]]]:
-    block = _section(text, "SOLID_COLORS")
-    out: list[tuple[str, int, tuple[int, int, int]]] = []
-    for name, byte, r, g, b in _SOLID_RE.findall(block):
-        out.append((name, int(byte, 16),
-                    (int(r, 16), int(g, 16), int(b, 16))))
-    return out
+def _parse_entries(text: str, var_name: str) -> list[tuple[str, int]]:
+    block = _section(text, var_name)
+    return [(name, int(b, 16)) for name, b in _ENTRY_RE.findall(block)]
 
 
 class LightPlatformTests(unittest.TestCase):
-    """Shape and content of the light platform's two tables."""
+    """Shape and content of the light platform's effect tables."""
 
     def setUp(self):
         if LIGHT_INIT_PATH.is_file():
             self.text = LIGHT_INIT_PATH.read_text(encoding="utf-8")
-            self.solids = _parse_solids(self.text)
-            self.shows = _parse_shows(self.text)
+            self.solids = _parse_entries(self.text, "SOLID_EFFECTS")
+            self.shows = _parse_entries(self.text, "SHOW_EFFECTS")
         else:
             self.text = None
             self.solids = None
@@ -141,13 +121,12 @@ class LightPlatformTests(unittest.TestCase):
             f"missing {LIGHT_INIT_PATH.relative_to(REPO_ROOT)}",
         )
 
-    def test_solid_colors_match_expected(self):
+    def test_solid_effects_match_expected(self):
         self._require()
-        got = [(n, b) for n, b, _ in self.solids]
         self.assertEqual(
-            sorted(got, key=lambda e: e[1]),
+            sorted(self.solids, key=lambda e: e[1]),
             sorted(EXPECTED_SOLIDS, key=lambda e: e[1]),
-            "SOLID_COLORS does not match the canonical 5",
+            "SOLID_EFFECTS does not match the canonical 5",
         )
 
     def test_show_effects_match_expected(self):
@@ -159,10 +138,10 @@ class LightPlatformTests(unittest.TestCase):
         )
 
     def test_tables_combined_cover_cli_effects(self):
-        """SOLID_COLORS + SHOW_EFFECTS together must equal cli.py
+        """SOLID_EFFECTS + SHOW_EFFECTS together must equal cli.py
         minus Lock/Return/Standby."""
         self._require()
-        combined = {b for _, b, _ in self.solids} | {b for _, b in self.shows}
+        combined = {b for _, b in self.solids} | {b for _, b in self.shows}
         expected = set(EFFECT_TABLE.values()) - set(EXCLUDED_BYTES.keys())
         self.assertEqual(
             combined, expected,
@@ -172,7 +151,7 @@ class LightPlatformTests(unittest.TestCase):
 
     def test_bytes_agree_with_cli_table(self):
         self._require()
-        for name, byte, _rgb in self.solids:
+        for name, byte in self.solids:
             with self.subTest(solid=name):
                 self.assertEqual(EFFECT_TABLE[name.lower()], byte)
         for name, byte in self.shows:
@@ -181,7 +160,7 @@ class LightPlatformTests(unittest.TestCase):
 
     def test_excluded_bytes_never_appear(self):
         self._require()
-        all_bytes = {b for _, b, _ in self.solids} | {b for _, b in self.shows}
+        all_bytes = {b for _, b in self.solids} | {b for _, b in self.shows}
         for byte, reason in EXCLUDED_BYTES.items():
             with self.subTest(byte=f"0x{byte:02x}"):
                 self.assertNotIn(
@@ -189,49 +168,20 @@ class LightPlatformTests(unittest.TestCase):
                     f"0x{byte:02x} appeared in light tables — {reason}",
                 )
 
-    def test_solids_are_pure_primaries(self):
-        """User spec: solids are pure saturated colors, no mixed
-        intermediates. Each channel must be 0x00 or 0xFF."""
-        self._require()
-        for name, _, (r, g, b) in self.solids:
-            with self.subTest(solid=name):
-                for ch, label in ((r, "R"), (g, "G"), (b, "B")):
-                    self.assertIn(
-                        ch, (0x00, 0xFF),
-                        f"{name}: {label} channel is 0x{ch:02x}, "
-                        "must be 0x00 or 0xFF per user-confirmed fixture "
-                        "behavior (pure primaries only)",
-                    )
-
 
 class _ParserUnitTests(unittest.TestCase):
-    """Spot-check the regex parsers."""
+    """Spot-check the regex parser."""
 
-    def test_parses_shows_section(self):
+    def test_parses_named_section(self):
         src = '''
-        SHOW_EFFECTS = [
+        SOLID_EFFECTS = [
             ("Alpha", 0x01),
             ("Beta",  0x02),
         ]
         '''
         self.assertEqual(
-            _parse_shows(src),
+            _parse_entries(src, "SOLID_EFFECTS"),
             [("Alpha", 0x01), ("Beta", 0x02)],
-        )
-
-    def test_parses_solids_section(self):
-        src = '''
-        SOLID_COLORS = [
-            ("Red",   0x0A, (0xFF, 0x00, 0x00)),
-            ("White", 0x0B, (0xFF, 0xFF, 0xFF)),
-        ]
-        '''
-        self.assertEqual(
-            _parse_solids(src),
-            [
-                ("Red",   0x0A, (0xFF, 0x00, 0x00)),
-                ("White", 0x0B, (0xFF, 0xFF, 0xFF)),
-            ],
         )
 
 

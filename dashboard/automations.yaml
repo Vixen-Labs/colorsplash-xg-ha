@@ -3,8 +3,12 @@
 # Copy individual blocks into HA's `automations.yaml` (or create
 # them via the UI editor). Adjust entity IDs to match your setup
 # — the headless bridge defaults to `colorsplash-xg-bridge` so
-# entities are named `light.pool_light`, `button.pool_*`,
-# `sensor.pool_ble_rssi`, etc.
+# entities are named:
+#   light.pool_light                (on/off + 12 effects)
+#   select.pool_active_preset       (user preset slugs)
+#   button.pool_color_lock          (capture)
+#   button.pool_color_return        (replay)
+#   sensor.pool_ble_rssi, sensor.pool_last_displayed_color, etc.
 #
 # All examples use the headless variant's entities. The display
 # variant has the same entity names (only the YAML config differs)

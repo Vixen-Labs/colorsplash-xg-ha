@@ -160,6 +160,27 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   //   {"slug":"...","name":"...","hex":"#rrggbb",
   //    "start_byte":N,"wait_ms":N}
   std::string preset_at_json(size_t idx) const;
+  // Slug-only accessor used by the select platform to build its
+  // option list. Returns empty string if `idx >= count`.
+  std::string preset_slug_at(size_t idx) const;
+
+  // Most recent "selected color identity" — what the fixture is
+  // currently displaying, in two parallel forms (#73 / #75):
+  //   - last_displayed_color_hex(): "#rrggbb" or "" (unknown).
+  //     Updated for solid bytes, pick_color resolves, and preset
+  //     recalls. Shows / Standby / Lock / Return don't update it
+  //     since they don't correspond to a steady RGB.
+  //   - last_recalled_slug(): the slug passed to color_preset_recall
+  //     on the most recent successful recall, or "" if any non-
+  //     recall path (effect, RGB pick, Standby, etc.) ran since.
+  //     Drives select.pool_active_preset's published state so HA
+  //     scenes round-trip cleanly.
+  const std::string &last_displayed_color_hex() const {
+    return this->last_displayed_color_hex_;
+  }
+  const std::string &last_recalled_slug() const {
+    return this->last_recalled_slug_;
+  }
 
   // Pointer to the bridge's light entity, captured from the
   // light component's setup_state() callback. Used by
@@ -256,6 +277,8 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   optional<uint8_t> last_preset_byte_;
   optional<PickRecipe> last_picked_recipe_;
   bool last_send_was_return_{false};
+  std::string last_displayed_color_hex_;
+  std::string last_recalled_slug_;
 
   // Color preset NVS storage (#53). Loaded once at setup(),
   // re-saved after every save/delete service call.

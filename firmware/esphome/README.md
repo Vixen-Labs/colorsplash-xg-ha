@@ -125,20 +125,40 @@ dns-sd -G v4 colorsplash-xg-bridge.local      # (or colorsplash-xg.local for dis
 nc -zv <ip> 6053                              # HA API port open
 ```
 
-## Headless config option: experimental RGB color picker
+## HA-facing entity surface
 
-`light.pool_light` defaults to **classic** mode (on/off +
-12 named effects, no color wheel). Phase 4b shipped an
-experimental color-wheel that drives the fixture via an
-embedded show-scrub LUT — opt in by adding `rgb_mode: true`
-to the light's YAML config:
+The bridge exposes a deliberately constrained surface that
+matches what the fixture actually does:
+
+| Entity | What it represents |
+|---|---|
+| `light.pool_light` | on/off + 12 hardware effects (5 solids + 7 shows). No `rgb_color`, no brightness. |
+| `select.pool_active_preset` | currently-recalled user preset (slug) — options refresh as the user CRUDs presets via the JS card |
+| `button.pool_color_lock` / `button.pool_color_return` | the controller's "last locked" capture / replay |
+| `sensor.pool_color_preset_count` + `sensor.pool_color_preset_0..4` | preset table (diagnostic) |
+| `sensor.pool_last_displayed_color` | "#rrggbb" of the fixture's currently-displayed color (or empty for shows / standby) |
+| `sensor.pool_last_picked_recipe` | "0xNN,wait_ms" of the most recent picker hit |
+| `binary_sensor.pool_ble_connected`, `sensor.pool_ble_rssi`, `sensor.pool_command_count`, `sensor.pool_error_count`, `text_sensor.pool_last_ble_error`, `…last_command`, `…last_echo` | diagnostics |
+
+Why the light is on/off + effects only (issue #75): exposing
+`rgb_color` on the light entity made HA's scene editor offer
+an arbitrary color picker, but the fixture only emits the 12
+hardware presets (or LUT approximations of arbitrary RGB targets
+via the experimental picker). Honest entity surface > pretty UI
+that lies about hardware capabilities.
+
+### Power-user toggle: `rgb_mode`
+
+If you want HA-native RGB control on the light entity (HA's
+color wheel directly drives `pick_color`), opt in via the
+light's YAML config:
 
 ```yaml
 light:
   - platform: colorsplash_xg
     # … other options …
     rgb_mode: true   # advertises ColorMode::RGB to HA
-    # rgb_mode: false  # default — classic effects-only
+    # rgb_mode: false  # default — on/off + 12 effects
 ```
 
 After changing `rgb_mode`, you must re-flash the bridge AND
@@ -147,12 +167,10 @@ Services → ESPHome → 3-dot menu → Reload). HA caches the
 device's color-mode capability at integration setup; just
 re-flashing isn't enough.
 
-Why it's experimental: the fixture's reachable color gamut is
-constrained, so target RGBs land approximately rather than
-exactly (issue #54 has full context). The future preset-card
-work (issue #53) will give users a way to save & tweak specific
-known-good colors as named presets, sidestepping the gamut
-imprecision.
+The JS Lovelace card's experimental color wheel works
+independently of `rgb_mode`: it always calls the bridge's
+`pool_set_rgb` service directly, so the wheel works whether
+you've opted into HA-native RGB or not.
 
 ## Subsequent updates (OTA)
 
