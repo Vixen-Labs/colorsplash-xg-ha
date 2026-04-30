@@ -1,7 +1,5 @@
 ---
-name: colorsplash-xg-ha issue / phase map
-description: How this repo's 24 GitHub issues map onto the 6-phase plan
-type: project
+name: colorsplash-xg-ha issue / phase map description: How this repo's 24 GitHub issues map onto the 6-phase plan type: project
 ---
 
 `colorsplash-xg-ha` has **24 open issues mapped one-to-one onto the phased plan in docs/PLAN.md**, numbered roughly in phase order:

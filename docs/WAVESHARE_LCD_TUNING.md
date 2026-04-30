@@ -1,28 +1,18 @@
 # Tear-free RGB on Waveshare ESP32-S3-Touch-LCD-7
 
-Settings required to get a clean, glitch-free display on the
-Waveshare ESP32-S3-Touch-LCD-7 (800×480 RGB-parallel + GT911 touch
-+ CH422G I/O expander) under ESPHome with concurrent BLE + Wi-Fi.
+Settings required to get a clean, glitch-free display on the Waveshare ESP32-S3-Touch-LCD-7 (800×480 RGB-parallel + GT911 touch
++ CH422G I/O expander) under ESPHome with concurrent BLE + Wi-Fi
 
-These tunings were derived from
-[Waveshare's official ESP32-S3-Touch-LCD-7B reference][wave-ref]
-plus empirical testing during Phase 3 #15. ESPHome's bundled
-`mipi_rgb` preset for this board (as of 2026.4.0) gets the pin
-map right but does **not** carry the vendor's recommended PSRAM
-and panel-DMA tunings.
+These tunings were derived from [Waveshare's official ESP32-S3-Touch-LCD-7B reference][wave-ref] plus empirical testing during Phase 3 #15. ESPHome's bundled `mipi_rgb` preset for this board (as of 2026.4.0) gets the pin map right but does **not** carry the vendor's recommended PSRAM and panel-DMA tunings.
 
 [wave-ref]: https://github.com/waveshareteam/ESP32-S3-Touch-LCD-7B/tree/main/examples/ESP-IDF/13_LVGL_TRANSPLANT
 
 ## Symptoms when these tunings are missing
 
-- **Bursty vertical scanline shifts** — parts (or all) of the screen
-  briefly offset down by a few rows, then snap back. Caused by RGB
-  panel DMA losing pclk cycles when the PSRAM bus is contended by
-  Wi-Fi/BLE bursts.
-- **Idle flicker** even when nothing is being drawn.
-- **Glitches under interaction** (button taps, list scrolls).
-- No color noise, no whole-screen flicker, no banding — pure
-  scanline desync.
+- **Bursty vertical scanline shifts** — parts (or all) of the screen briefly offset down by a few rows, then snap back. Caused by RGB panel DMA losing pclk cycles when the PSRAM bus is contended by Wi-Fi/BLE bursts
+- **Idle flicker** even when nothing is being drawn
+- **Glitches under interaction** (button taps, list scrolls)
+- No color noise, no whole-screen flicker, no banding — pure scanline desync
 
 ## Recipe (ALL pieces required; partial fixes are *worse* than none)
 
@@ -50,24 +40,13 @@ psram:
   speed: 120MHz                                # not 80 — bus headroom matters
 ```
 
-**Why `LV_ATTRIBUTE_FAST_MEM_USE_IRAM` is NOT set**: Waveshare's
-reference enables it but that Kconfig is for ESP-IDF's
-managed-components LVGL packaging. ESPHome's LVGL packaging doesn't
-define the corresponding macro under that flag, so enabling it
-produces compile errors. Skip it.
+**Why `LV_ATTRIBUTE_FAST_MEM_USE_IRAM` is NOT set**: Waveshare's reference enables it but that Kconfig is for ESP-IDF's managed-components LVGL packaging. ESPHome's LVGL packaging doesn't define the corresponding macro under that flag, so enabling it produces compile errors. Skip it.
 
 ### 2. Patched `mipi_rgb` component
 
-ESPHome 2026.4.0 hardcodes `num_fbs = 1` and lacks
-`bb_invalidate_cache` and `psram_trans_align`. Without these the
-panel runs single-buffered, has stale pixels in CPU cache when
-DMA reads, and burst-reads are misaligned with the cache line.
+ESPHome 2026.4.0 hardcodes `num_fbs = 1` and lacks `bb_invalidate_cache` and `psram_trans_align`. Without these the panel runs single-buffered, has stale pixels in CPU cache when DMA reads, and burst-reads are misaligned with the cache line.
 
-Workaround: copy the upstream `mipi_rgb` component into the
-project as a local override and patch its setup. With the
-project's existing `external_components.local` block pointing at
-`firmware/esphome/components/`, ESPHome picks up the local copy
-instead of the built-in.
+Workaround: copy the upstream `mipi_rgb` component into the project as a local override and patch its setup. With the project's existing `external_components.local` block pointing at `firmware/esphome/components/`, ESPHome picks up the local copy instead of the built-in.
 
 ```sh
 mkdir -p firmware/esphome/components/mipi_rgb
@@ -76,8 +55,7 @@ cp -r $(brew --prefix esphome)/libexec/lib/python3.*/site-packages/esphome/compo
 rm -rf firmware/esphome/components/mipi_rgb/__pycache__
 ```
 
-Then in `firmware/esphome/components/mipi_rgb/mipi_rgb.cpp`,
-inside `MipiRgb::common_setup_()`, change:
+Then in `firmware/esphome/components/mipi_rgb/mipi_rgb.cpp`, inside `MipiRgb::common_setup_()`, change:
 
 ```cpp
 config.flags.fb_in_psram = 1;
@@ -108,10 +86,7 @@ lvgl:
   text_color: 0xF0F0F0
 ```
 
-When `lvgl.rotation:` is set, **do not** add `swap_xy` /
-`mirror_x` / `mirror_y` on the touchscreen — LVGL handles input
-rotation itself, and a layered transform double-rotates and
-scrambles the mapping.
+When `lvgl.rotation:` is set, **do not** add `swap_xy` / `mirror_x` / `mirror_y` on the touchscreen — LVGL handles input rotation itself, and a layered transform double-rotates and scrambles the mapping.
 
 ### 4. Display + touch
 
@@ -133,8 +108,7 @@ touchscreen:
     display: main_display
 ```
 
-(Reset pin via the CH422G I/O expander, not a direct GPIO — the
-preset relies on this.)
+(Reset pin via the CH422G I/O expander, not a direct GPIO — the preset relies on this.)
 
 ## What did NOT help
 
@@ -153,15 +127,10 @@ preset relies on this.)
 
 The fix would be:
 
-- Expose `num_fbs`, `bounce_buffer_size_px`, `bb_invalidate_cache`,
-  and `psram_trans_align` as YAML options on `mipi_rgb`.
-- Default `num_fbs` based on whether `lvgl:` is present (need
-  double-buffering when rendering animations) and on available
-  PSRAM.
+- Expose `num_fbs`, `bounce_buffer_size_px`, `bb_invalidate_cache`, and `psram_trans_align` as YAML options on `mipi_rgb`
+- Default `num_fbs` based on whether `lvgl:` is present (need double-buffering when rendering animations) and on available PSRAM
 
-A PR against ESPHome would eliminate the local-override step for
-this and similar boards. Issue: the patch above is local-only
-until upstreamed.
+A PR against ESPHome would eliminate the local-override step for this and similar boards. Issue: the patch above is local-only until upstreamed.
 
 ## Verifying the fix
 
