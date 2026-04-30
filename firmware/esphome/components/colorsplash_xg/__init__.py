@@ -12,7 +12,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_MAC_ADDRESS
 
 AUTO_LOAD = ["esp32_ble_client"]
-CODEOWNERS = ["@swizzlevixen"]
+CODEOWNERS = ["@Vixen-Labs"]
 DEPENDENCIES = ["esp32_ble_tracker"]
 
 colorsplash_xg_ns = cg.esphome_ns.namespace("colorsplash_xg")

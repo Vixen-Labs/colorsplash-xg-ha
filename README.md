@@ -75,19 +75,19 @@ A few user-facing facts worth knowing up-front. The longer methodology / enginee
 - **No readable state from the controller.** The fixture won't tell anyone what color it's currently showing — only what command was most recently sent. The bridge tracks intent locally; if someone pulls the breaker mid-show, the bridge may briefly lie about what the hardware shows
 - **BLE range matters.** Place the ESP32 within line-of-sight or wall-or-two of the equipment pad. RSSI better than ~−85 dBm is the practical floor for stable reconnect; the maintainer's install runs at −67 dBm
 - **No native arbitrary RGB.** The fixture's reachable color gamut is constrained — saturated primaries are exact, mid-tones are approximate. The picker's "best match" is honest about this
-- **Five user preset slots.** Hard cap, deterministic — saving a 6th refuses cleanly rather than silently dropping data. Why five? See issue [#65](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/65)
+- **Five user preset slots.** Hard cap, deterministic — saving a 6th refuses cleanly rather than silently dropping data. Why five? See issue [#65](https://github.com/Vixen-Labs/colorsplash-xg-ha/issues/65)
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Controller["J&J LPL-XG-CTRL-1<br/>Bluetooth pool-light controller"]
-    Bridge["ESP32-WROOM-32<br/>colorsplash_xg ESPHome firmware"]
-    HA["Home Assistant<br/>(same LAN)"]
-    UI["Lovelace card / HA app /<br/>scenes / automations"]
+    Controller["J&amp;J LPL-XG-CTRL-1<br>Bluetooth pool-light controller"]
+    Bridge["ESP32-WROOM-32<br>colorsplash_xg ESPHome firmware"]
+    HA["Home Assistant<br>same LAN"]
+    UI["Lovelace card, HA app<br>scenes, automations"]
 
-    Controller -->|BLE GATT, 24/7| Bridge
-    Bridge -->|ESPHome native API| HA
+    Controller -- "BLE GATT 24/7" --> Bridge
+    Bridge -- "ESPHome native API" --> HA
     HA --> UI
 ```
 
@@ -121,7 +121,7 @@ captures/      # gitignored; README-only stub tracks the procedure
   <img src="assets/colorsplash-xg-waveshare.jpg" alt="ColorSplash XG bridge running on a Waveshare ESP32-S3 7&quot; touchscreen, mounted on a wall and showing the LVGL UI: status bar, on/off switch, five color swatches, effect dropdown, and Lock/Return buttons" width="420">
 </p>
 
-An earlier variant of this project ran on a Waveshare ESP32-S3 7" touchscreen with a full LVGL UI — a wall-mounted standalone controller that didn't depend on Home Assistant being reachable. It's preserved at tag [`v0.1.0-display`](https://github.com/swizzlevixen/colorsplash-xg-ha/releases/tag/v0.1.0-display) and the YAML config is still in [`firmware/esphome/colorsplash-xg-display.yaml`](firmware/esphome/colorsplash-xg-display.yaml), but it isn't kept up to date with the headless variant's features and isn't the recommended path. If you want the wall panel UX, that tag is the canonical "phase 3 complete" snapshot; flash, install, and use as-is. Tuning notes live in [`docs/WAVESHARE_LCD_TUNING.md`](docs/WAVESHARE_LCD_TUNING.md).
+An earlier variant of this project ran on a Waveshare ESP32-S3 7" touchscreen with a full LVGL UI — a wall-mounted standalone controller that didn't depend on Home Assistant being reachable. It's preserved at tag [`v0.1.0-display`](https://github.com/Vixen-Labs/colorsplash-xg-ha/releases/tag/v0.1.0-display) and the YAML config is still in [`firmware/esphome/colorsplash-xg-display.yaml`](firmware/esphome/colorsplash-xg-display.yaml), but it isn't kept up to date with the headless variant's features and isn't the recommended path. If you want the wall panel UX, that tag is the canonical "phase 3 complete" snapshot; flash, install, and use as-is. Tuning notes live in [`docs/WAVESHARE_LCD_TUNING.md`](docs/WAVESHARE_LCD_TUNING.md).
 
 The pivot from display to headless was driven by BLE range: the wall location's RSSI floated between −88 and −95 dBm, at the edge of stable reconnect, while a small ESP32 next to the equipment pad runs at −67 dBm steady. The full reasoning lives in [`docs/PLAN.md`](docs/PLAN.md).
 

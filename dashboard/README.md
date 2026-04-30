@@ -66,7 +66,7 @@ Renaming entities, reordering tiles, or swapping out `mdi:*` icons for something
 
 ## Custom card install
 
-The custom-card version (`colorsplash-xg-card.js`) replaces the stock card with full-fill color swatches, gradient show thumbnails, an "R" Return badge, a distinct Lock button, and a "Saved Presets" section that's wired up for [#53](https://github.com/swizzlevixen/colorsplash-xg-ha/issues/53).
+The custom-card version (`colorsplash-xg-card.js`) replaces the stock card with full-fill color swatches, gradient show thumbnails, an "R" Return badge, a distinct Lock button, and a "Saved Presets" section that's wired up for [#53](https://github.com/Vixen-Labs/colorsplash-xg-ha/issues/53).
 
 ### Install
 
