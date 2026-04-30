@@ -568,6 +568,15 @@ ColorSplashXG::PickRecipe ColorSplashXG::pick_color(
                 rec.r, rec.g, rec.b);
   this->last_displayed_color_hex_ = hex;
   this->publish_displayed_color_();
+  // The card's pool_set_rgb path bypasses light.turn_on, so HA's
+  // light entity may still report state=off. Force-publish state=on
+  // (without going through write_state, which would re-trigger this
+  // path via remote_values rebroadcast).
+  if (this->light_state_ != nullptr
+      && !this->light_state_->remote_values.is_on()) {
+    this->light_state_->remote_values.set_state(true);
+    this->light_state_->publish_state();
+  }
   return rec;
 }
 
