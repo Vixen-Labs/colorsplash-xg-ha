@@ -191,6 +191,23 @@
     - service: esphome.colorsplash_xg_bridge_color_preset_recall
       data: {slug: sunset_magenta}
 
+# ─── Script-style preset (pairs with HA scenes via blueprint) ────
+# Wrap a preset recall in a script so it shows up in HA's UI
+# alongside scenes. The script can be:
+#   - tapped from a Lovelace button (no scene involved)
+#   - listed in a scene's actions (Settings → Scenes → Edit Scene)
+#   - referenced from the blueprint at
+#     dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml
+# Drop this into HA's `scripts.yaml`, or create the same shape via
+# the Scripts UI editor.
+
+# pool_preset_sunset_magenta:
+#   alias: "Pool Preset: Sunset Magenta"
+#   sequence:
+#     - service: esphome.colorsplash_xg_bridge_color_preset_recall
+#       data:
+#         slug: sunset_magenta
+
 - alias: "Pool: deep blue for nighttime"
   description: "Drive the fixture to a deep blue (Parisian Blue solid)"
   trigger:
