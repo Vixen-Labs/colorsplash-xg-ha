@@ -10,14 +10,11 @@
 # integration). For the display variant, the prefix is
 # `colorsplash_xg_` instead (no `_bridge`).
 #
-#   light.colorsplash_xg_bridge_pool_light                  on/off + 7 shows
-#   button.colorsplash_xg_bridge_pool_parisian_blue         solid 0x08
-#   button.colorsplash_xg_bridge_pool_brazilian_red         solid 0x0A
-#   button.colorsplash_xg_bridge_pool_arctic_white          solid 0x0B
-#   button.colorsplash_xg_bridge_pool_miami_pink            solid 0x0C
-#   button.colorsplash_xg_bridge_pool_new_zealand_green     solid 0x09
-#   button.colorsplash_xg_bridge_pool_color_return          0x0E (replays)
-#   button.colorsplash_xg_bridge_pool_color_lock            0x0D (captures)
+#   light.colorsplash_xg_bridge_pool_light             on/off + 12 effects
+#                                                       (5 solids + 7 shows)
+#   select.colorsplash_xg_bridge_pool_active_preset    user-saved presets
+#   button.colorsplash_xg_bridge_pool_color_return     0x0E (replays)
+#   button.colorsplash_xg_bridge_pool_color_lock       0x0D (captures)
 #
 # If you renamed the device or entities in HA, update the matching
 # `entity:` lines below to the real IDs you see under
@@ -28,58 +25,33 @@
 
 type: vertical-stack
 cards:
-  # Master on/off + the 7 show effects via HA's standard light card.
-  # Brightness slider and color picker stay hidden because the
-  # firmware declares ON_OFF color mode only.
+  # Master on/off + the 12 effects (5 solids + 7 shows) via HA's
+  # standard light card. The fixture has no native brightness or
+  # arbitrary RGB, so the firmware advertises ON_OFF color mode
+  # only — HA hides the brightness slider and color wheel.
   - type: light
     entity: light.colorsplash_xg_bridge_pool_light
     name: Pool Light
 
-  # 3×2 grid: 5 solid colors + Return.
-  # Tile cards render the entity's icon on a colored accent; tapping
-  # a tile calls button.press on the bound entity (default action
-  # for button entities).
+  # User-saved presets — pick one to recall the exact recipe.
+  # Options refresh as you save / delete presets via the JS card.
+  - type: tile
+    entity: select.colorsplash_xg_bridge_pool_active_preset
+    name: Active Preset
+
+  # Lock + Return — the controller's "last locked" slot. Lock
+  # captures current displayed color; Return replays it.
   - type: grid
-    columns: 3
+    columns: 2
     square: false
     cards:
       - type: tile
-        entity: button.colorsplash_xg_bridge_pool_parisian_blue
-        name: Parisian Blue
-        color: blue
-        icon: mdi:circle
-      - type: tile
-        entity: button.colorsplash_xg_bridge_pool_brazilian_red
-        name: Brazilian Red
-        color: red
-        icon: mdi:circle
-      - type: tile
-        entity: button.colorsplash_xg_bridge_pool_arctic_white
-        name: Arctic White
-        color: white
-        icon: mdi:circle
-      - type: tile
-        entity: button.colorsplash_xg_bridge_pool_miami_pink
-        name: Miami Pink
-        color: pink
-        icon: mdi:circle
-      - type: tile
-        entity: button.colorsplash_xg_bridge_pool_new_zealand_green
-        name: New Zealand Green
-        color: green
-        icon: mdi:circle
+        entity: button.colorsplash_xg_bridge_pool_color_lock
+        name: Color Lock
+        color: amber
+        icon: mdi:lock
       - type: tile
         entity: button.colorsplash_xg_bridge_pool_color_return
         name: Color Return
         color: grey
         icon: mdi:restore
-
-  # Lock stands alone at the bottom — it captures the current
-  # displayed color into the controller's "last locked" slot for
-  # Return to replay later. Visually distinct from the color
-  # selectors so the function stays obvious.
-  - type: tile
-    entity: button.colorsplash_xg_bridge_pool_color_lock
-    name: Color Lock
-    color: amber
-    icon: mdi:lock

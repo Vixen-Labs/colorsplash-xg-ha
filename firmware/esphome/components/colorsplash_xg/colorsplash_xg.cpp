@@ -5,6 +5,7 @@
 #include "esphome/components/esp32_ble_client/ble_characteristic.h"
 #include "esphome/components/esp32_ble_client/ble_descriptor.h"
 #include "esphome/components/light/light_state.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
@@ -385,6 +386,27 @@ void ColorSplashXG::send_effect_byte(uint8_t byte_value) {
   } else if (byte_value != 0x0d) {
     this->last_send_was_return_ = false;
   }
+  // Maintain "what's currently displayed" identity (#73 / #75) for
+  // the new last_displayed_color text_sensor + select.pool_active_
+  // preset entity. Solid bytes have known pure-primary RGB; shows
+  // are time-varying (clear hex). Lock/Return don't change displayed
+  // color, so leave both fields alone. Any non-recall path clears
+  // the recalled-slug since this byte didn't come from a recall.
+  if (byte_value != 0x0d && byte_value != 0x0e) {
+    this->last_recalled_slug_.clear();
+    switch (byte_value) {
+      case 0x08: this->last_displayed_color_hex_ = "#0000ff"; break;
+      case 0x09: this->last_displayed_color_hex_ = "#00ff00"; break;
+      case 0x0a: this->last_displayed_color_hex_ = "#ff0000"; break;
+      case 0x0b: this->last_displayed_color_hex_ = "#ffffff"; break;
+      case 0x0c: this->last_displayed_color_hex_ = "#ff00ff"; break;
+      default:
+        // Standby (0x00) or shows (0x01..0x07) — no steady RGB.
+        this->last_displayed_color_hex_.clear();
+        break;
+    }
+    this->publish_displayed_color_();
+  }
   this->try_drain_pending_();
 }
 
@@ -536,6 +558,25 @@ ColorSplashXG::PickRecipe ColorSplashXG::pick_color(
       this->send_effect_byte(0x0d);
     });
   }
+  // Override the last_displayed_color_hex_ that send_effect_byte
+  // just wrote (which would be cleared for shows / solid-byte if
+  // we ended up with a non-solid recipe). The LUT match's resolved
+  // RGB is what the fixture will actually show, so that's what the
+  // card reads for its wheel cursor + bulb tint.
+  char hex[8];
+  std::snprintf(hex, sizeof(hex), "#%02x%02x%02x",
+                rec.r, rec.g, rec.b);
+  this->last_displayed_color_hex_ = hex;
+  this->publish_displayed_color_();
+  // The card's pool_set_rgb path bypasses light.turn_on, so HA's
+  // light entity may still report state=off. Force-publish state=on
+  // (without going through write_state, which would re-trigger this
+  // path via remote_values rebroadcast).
+  if (this->light_state_ != nullptr
+      && !this->light_state_->remote_values.is_on()) {
+    this->light_state_->remote_values.set_state(true);
+    this->light_state_->publish_state();
+  }
   return rec;
 }
 
@@ -584,6 +625,16 @@ void ColorSplashXG::load_color_presets_() {
   this->preset_store_.count = 0;
   std::memset(this->preset_store_.entries, 0,
               sizeof(this->preset_store_.entries));
+}
+
+void ColorSplashXG::publish_displayed_color_() {
+  if (this->displayed_color_sensor_ == nullptr) return;
+  if (this->last_displayed_color_hex_ ==
+      this->last_published_displayed_color_hex_) return;
+  this->displayed_color_sensor_->publish_state(
+      this->last_displayed_color_hex_);
+  this->last_published_displayed_color_hex_ =
+      this->last_displayed_color_hex_;
 }
 
 void ColorSplashXG::save_color_presets_() {
@@ -665,40 +716,32 @@ bool ColorSplashXG::color_preset_recall(const std::string &slug) {
           this->send_effect_byte(0x0d);
         });
       }
-      // Republish the saved RGB on the light entity so the JS
-      // card's wheel cursor + bulb tint + RGB label reflect the
-      // recalled color. Deferred ~50ms so it doesn't race the
-      // BLE dispatch sequence above. Only runs if setup_state
-      // captured the LightState pointer.
-      //
-      // Important: also force color_mode=RGB and state=on. In
-      // write_state's republish path the LightCall machinery had
-      // already set those before our lambda fires, but here we're
-      // outside any LightCall — remote_values still carries
-      // whatever the previous interaction left, which may be
-      // ON_OFF mode (in which case publish_state omits rgb_color
-      // from the pushed state and HA's attribute never updates).
+      // Update "what's currently displayed" identity (#73 / #75).
+      // send_effect_byte cleared these as a non-recall path; we
+      // now overwrite with the recall's true intent. The card
+      // reads last_displayed_color_hex via the
+      // pool_last_displayed_color text_sensor; HA scenes round-
+      // trip preset selection via select.pool_active_preset.
+      char hex[8];
+      std::snprintf(hex, sizeof(hex), "#%02x%02x%02x",
+                    slot.r, slot.g, slot.b);
+      this->last_displayed_color_hex_ = hex;
+      this->last_recalled_slug_ = slug;
+      this->publish_displayed_color_();
+      // Clear HA's stale effect attribute (the start_byte we
+      // fired through send_effect_byte was a hw effect's byte,
+      // but the user's intent is a saved preset, not that
+      // effect). Force-state on at the same time. Safe to fire
+      // because the bare-ON branch in colorsplash_light's
+      // write_state checks last_recalled_slug_ and short-
+      // circuits the last_preset replay — no extra BLE bytes.
+      // Covers both card-side recall and scene-initiated recall
+      // (via select.select_option) uniformly.
       if (this->light_state_ != nullptr) {
-        light::LightState *light = this->light_state_;
-        const uint8_t pr = slot.r, pg = slot.g, pb = slot.b;
-        ESP_LOGI(TAG, "preset_republish: scheduling rgb=(%u,%u,%u) "
-                      "on LightState* %p",
-                 pr, pg, pb, static_cast<const void *>(light));
-        App.scheduler.set_timeout(light, "preset_republish_rgb",
-            50, [light, pr, pg, pb]() {
-          ESP_LOGI("colorsplash_xg",
-                   "preset_republish: firing rgb=(%u,%u,%u)",
-                   pr, pg, pb);
-          light->remote_values.set_state(true);
-          light->remote_values.set_color_mode(light::ColorMode::RGB);
-          light->remote_values.set_red(pr / 255.0f);
-          light->remote_values.set_green(pg / 255.0f);
-          light->remote_values.set_blue(pb / 255.0f);
-          light->publish_state();
-        });
-      } else {
-        ESP_LOGW(TAG, "preset_republish: light_state_ is null, "
-                      "UI will not auto-update");
+        auto call = this->light_state_->make_call();
+        call.set_effect("None");
+        call.set_state(true);
+        call.perform();
       }
       return true;
     }
@@ -729,6 +772,11 @@ bool ColorSplashXG::color_preset_delete(const std::string &slug) {
   ESP_LOGW(TAG, "color_preset_delete: slug '%s' not found",
            slug.c_str());
   return false;
+}
+
+std::string ColorSplashXG::preset_slug_at(size_t idx) const {
+  if (idx >= this->preset_store_.count) return std::string();
+  return std::string(this->preset_store_.entries[idx].slug);
 }
 
 std::string ColorSplashXG::preset_at_json(size_t idx) const {

@@ -1,10 +1,16 @@
 """ESPHome light platform for the ColorSplash XG pool-light bridge.
 
-Exposes a binary (on/off) light entity whose effects cover only
-the 7 show animations the controller speaks. The 5 solid colors
-and the Lock/Return controls surface as button entities defined
-in YAML — HA's light-entity color picker can't be constrained to
-the fixture's exact palette, so buttons give a cleaner 1:1 mapping.
+Exposes a binary (on/off) light entity whose effects cover all
+12 selectable hardware states: 5 solid colors + 7 show animations.
+Lock and Return are control bytes (not selectable colors), so they
+remain as button entities in YAML.
+
+Folding solids into the effect list lets HA scenes capture solid
+selection natively via `light.pool_light.effect: <name>` — the
+same shape scenes already use for shows. User-saved presets
+(recipe-based, runtime-mutable) are exposed separately via
+`select.pool_active_preset` since ESPHome light effects are
+compile-time-fixed.
 """
 
 import esphome.codegen as cg
@@ -27,33 +33,20 @@ ColorSplashPresetEffect = colorsplash_xg_ns.class_(
     LightEffect,
 )
 
-# Single source of truth for the light entity's display structure.
+# Single source of truth for the light entity's effect list.
 # Cross-verified by tests/test_esphome_light_effects.py against
 # tools/cli.py.
 #
-# The 5 solid colors are NOT exposed as effects — they're registered
-# as RGB targets so HA's light card shows them via its color picker
-# rather than cluttering the effect dropdown. The 7 shows remain as
-# effects (they're animations, not steady colors).
-#
-# RGB values are chosen to match each solid's color name. The
-# fixture's actual emission may differ slightly due to LED spectrum
-# and the controller's DAC; these values are what HA displays.
-
-# Reference table of the 5 solid colors. Not used by the light
-# platform itself (the 5 solids are exposed as button entities in
-# YAML, not effects); kept here as single-source-of-truth
-# documentation and for the cross-check test.
-#
-# The fixture emits pure saturated primaries (user-observed
-# 2026-04-20) — red #FF0000, green #00FF00, blue #0000FF, white
-# #FFFFFF, magenta #FF00FF.
-SOLID_COLORS: list[tuple[str, int, tuple[int, int, int]]] = [
-    ("Parisian Blue",      0x08, (0x00, 0x00, 0xFF)),
-    ("Brazilian Red",      0x0A, (0xFF, 0x00, 0x00)),
-    ("Arctic White",       0x0B, (0xFF, 0xFF, 0xFF)),
-    ("Miami Pink",         0x0C, (0xFF, 0x00, 0xFF)),
-    ("New Zealand Green",  0x09, (0x00, 0xFF, 0x00)),
+# All 12 selectable hardware states (5 solids + 7 shows) are
+# advertised as light effects so HA scenes can natively capture
+# fixture selection via the effect attribute. Lock (0x0D) and
+# Return (0x0E) stay as button entities (not selectable colors).
+SOLID_EFFECTS: list[tuple[str, int]] = [
+    ("Arctic White",       0x0B),
+    ("Brazilian Red",      0x0A),
+    ("New Zealand Green",  0x09),
+    ("Parisian Blue",      0x08),
+    ("Miami Pink",         0x0C),
 ]
 
 SHOW_EFFECTS: list[tuple[str, int]] = [
@@ -65,6 +58,10 @@ SHOW_EFFECTS: list[tuple[str, int]] = [
     ("Desert Skies",       0x06),
     ("Peruvian Paradise",  0x01),
 ]
+
+# Combined list passed to LightState::add_effects. Solids first so
+# they appear at the top of HA's effect dropdown.
+ALL_EFFECTS: list[tuple[str, int]] = SOLID_EFFECTS + SHOW_EFFECTS
 
 # Phase 4b experimental flag — when true, the light advertises
 # ColorMode::RGB in addition to ON_OFF, so HA's standard light card
@@ -94,15 +91,15 @@ async def to_code(config):
     cg.add(var.set_parent(parent))
     cg.add(var.set_rgb_mode(config[CONF_RGB_MODE]))
 
-    # Build the 7 show effects in codegen and pass them all to
+    # Build all 12 effects in codegen and pass them to
     # LightState::add_effects in a single call. LightState's
     # implementation assigns (`this->effects_ = effects;`) rather
     # than appending, so the list must be passed whole.
     light_var = await cg.get_variable(config[CONF_ID])
     effect_vars = []
-    for i, (name, byte) in enumerate(SHOW_EFFECTS):
+    for i, (name, byte) in enumerate(ALL_EFFECTS):
         effect_id = ID(
-            f"{config[CONF_ID].id}_show_{i}",
+            f"{config[CONF_ID].id}_effect_{i}",
             is_declaration=True,
             type=ColorSplashPresetEffect,
         )

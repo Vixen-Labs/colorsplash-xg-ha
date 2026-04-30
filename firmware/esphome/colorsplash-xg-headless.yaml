@@ -25,6 +25,17 @@ esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
   min_version: 2026.4.0
+  # Wire the displayed-color text_sensor into the bridge so the
+  # component can publish_state() proactively whenever the
+  # fixture's color changes — bypasses the template's polling
+  # interval for snappy card-UI feedback. Runs after all
+  # components have set up.
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(xg).set_displayed_color_sensor(
+              id(pool_last_displayed_color));
 
 esp32:
   # Plain ESP32-WROOM-32 dev kit. ESPHome's default `arduino`
@@ -201,55 +212,19 @@ light:
     id: pool_light
     name: "Pool Light"
     restore_mode: ALWAYS_OFF
-    # Phase 4b experimental: enable HA's standard color wheel,
-    # driven by the bridge's embedded show-scrub picker. See
-    # issue #54 — set to `false` (or remove this line) to revert
-    # to the classic on/off + named-effects-only interface, which
-    # is the project's stable default.
-    rgb_mode: true
+    # rgb_mode opt-in: power-user toggle for HA-native RGB control
+    # (HA's color wheel drives the bridge's embedded LUT picker).
+    # Default off — the fixture's real palette is the 12 effects
+    # below + user presets via select.pool_active_preset, so
+    # exposing arbitrary RGB at the light entity level mis-frames
+    # the hardware. The JS card still does the experimental
+    # color-picker UX via the pool_set_rgb service.
 
-# The 5 solid colors and the 2 show-control primitives (Lock,
-# Return) are all exposed as button entities. HA light entities
-# can't constrain their color picker to a discrete palette, so
-# buttons give a 1:1 mapping to the fixture's real presets and
-# avoid the impedance mismatch of HA's 8-swatch default palette
-# being shown for a light with only 5 colors. The dashboard card
-# groups these together visually.
+# Show-control primitives — act on the controller's internal
+# "last locked" slot. Lock captures current displayed color;
+# Return replays it. The 5 solid colors + 7 shows are all
+# exposed as light effects (see light/__init__.py).
 button:
-  # Solid colors — send the effect byte directly.
-  - platform: template
-    name: "Pool Parisian Blue"
-    icon: "mdi:palette"
-    on_press:
-      then:
-        - lambda: 'id(xg).send_effect_byte(0x08);'
-  - platform: template
-    name: "Pool Brazilian Red"
-    icon: "mdi:palette"
-    on_press:
-      then:
-        - lambda: 'id(xg).send_effect_byte(0x0a);'
-  - platform: template
-    name: "Pool Arctic White"
-    icon: "mdi:palette"
-    on_press:
-      then:
-        - lambda: 'id(xg).send_effect_byte(0x0b);'
-  - platform: template
-    name: "Pool Miami Pink"
-    icon: "mdi:palette"
-    on_press:
-      then:
-        - lambda: 'id(xg).send_effect_byte(0x0c);'
-  - platform: template
-    name: "Pool New Zealand Green"
-    icon: "mdi:palette"
-    on_press:
-      then:
-        - lambda: 'id(xg).send_effect_byte(0x09);'
-  # Show-control primitives — act on the controller's internal
-  # "last locked" slot. Lock captures current displayed color;
-  # Return replays it.
   - platform: template
     name: "Pool Color Lock"
     icon: "mdi:lock"
@@ -284,7 +259,7 @@ text_sensor:
   - platform: template
     name: "Pool Last Command"
     id: pool_last_command
-    update_interval: 15s
+    update_interval: 1s
     lambda: 'return id(xg).last_command_name();'
   # Surfaces the controller's most recent indication echo — the
   # authoritative "command accepted" signal per PROTOCOL.md §
@@ -358,6 +333,27 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 30s
     lambda: 'return id(xg).preset_at_json(4);'
+
+  # The fixture's currently-displayed RGB as a "#rrggbb" string,
+  # or empty when the displayed color isn't a steady RGB (shows,
+  # standby). Driven by the bridge's color paths (#73 / #75) so
+  # the JS card can render its wheel cursor + bulb tint without
+  # the light entity exposing rgb_color.
+  - platform: template
+    name: "Pool Last Displayed Color"
+    id: pool_last_displayed_color
+    update_interval: 2s
+    lambda: 'return id(xg).last_displayed_color_hex();'
+
+# Active user preset (#73). HA scenes capture the option string
+# so they can recall a saved preset by slug as part of their
+# state snapshot. Options refresh dynamically as the user adds
+# / deletes presets via the JS card.
+select:
+  - platform: colorsplash_xg
+    colorsplash_xg_id: xg
+    id: pool_active_preset
+    name: "Pool Active Preset"
 
 # Numeric diagnostics (#13). RSSI is polled every 30 s while
 # connected; the two counters are monotonic-within-session totals

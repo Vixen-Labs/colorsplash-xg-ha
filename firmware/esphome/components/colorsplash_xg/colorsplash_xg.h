@@ -11,6 +11,7 @@
 
 namespace esphome {
 namespace light { class LightState; }
+namespace text_sensor { class TextSensor; }
 }  // namespace esphome
 
 #include <deque>
@@ -160,6 +161,27 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   //   {"slug":"...","name":"...","hex":"#rrggbb",
   //    "start_byte":N,"wait_ms":N}
   std::string preset_at_json(size_t idx) const;
+  // Slug-only accessor used by the select platform to build its
+  // option list. Returns empty string if `idx >= count`.
+  std::string preset_slug_at(size_t idx) const;
+
+  // Most recent "selected color identity" — what the fixture is
+  // currently displaying, in two parallel forms (#73 / #75):
+  //   - last_displayed_color_hex(): "#rrggbb" or "" (unknown).
+  //     Updated for solid bytes, pick_color resolves, and preset
+  //     recalls. Shows / Standby / Lock / Return don't update it
+  //     since they don't correspond to a steady RGB.
+  //   - last_recalled_slug(): the slug passed to color_preset_recall
+  //     on the most recent successful recall, or "" if any non-
+  //     recall path (effect, RGB pick, Standby, etc.) ran since.
+  //     Drives select.pool_active_preset's published state so HA
+  //     scenes round-trip cleanly.
+  const std::string &last_displayed_color_hex() const {
+    return this->last_displayed_color_hex_;
+  }
+  const std::string &last_recalled_slug() const {
+    return this->last_recalled_slug_;
+  }
 
   // Pointer to the bridge's light entity, captured from the
   // light component's setup_state() callback. Used by
@@ -171,6 +193,17 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   }
   light::LightState *get_light_state() const {
     return this->light_state_;
+  }
+
+  // Optional pointer to the pool_last_displayed_color text_sensor.
+  // When set, the bridge proactively calls publish_state() on it
+  // whenever last_displayed_color_hex_ changes — bypassing the
+  // template sensor's polling latency for a snappy card UI. The
+  // YAML registers the pointer via an on_boot lambda; when the
+  // pointer is null (e.g., a YAML config that doesn't define the
+  // sensor), the bridge silently skips the proactive publish.
+  void set_displayed_color_sensor(text_sensor::TextSensor *sensor) {
+    this->displayed_color_sensor_ = sensor;
   }
 
   // Most recent "preset" byte sent — one of the 12 visible effects
@@ -256,15 +289,24 @@ class ColorSplashXG : public esp32_ble_client::BLEClientBase {
   optional<uint8_t> last_preset_byte_;
   optional<PickRecipe> last_picked_recipe_;
   bool last_send_was_return_{false};
+  std::string last_displayed_color_hex_;
+  std::string last_recalled_slug_;
 
   // Color preset NVS storage (#53). Loaded once at setup(),
   // re-saved after every save/delete service call.
   void load_color_presets_();
   void save_color_presets_();
+  // If the displayed-color sensor pointer is set and our hex has
+  // changed since we last published, push a fresh state. Cheap
+  // and idempotent; safe to call from any code path that may
+  // have updated last_displayed_color_hex_.
+  void publish_displayed_color_();
   ColorPresetStore preset_store_{};
   ESPPreferenceObject preset_pref_;
 
   light::LightState *light_state_{nullptr};
+  text_sensor::TextSensor *displayed_color_sensor_{nullptr};
+  std::string last_published_displayed_color_hex_;
 
   // Watchdog state — see PROTOCOL.md §Auto-reconnect (#12) for the
   // backoff table + reboot policy.

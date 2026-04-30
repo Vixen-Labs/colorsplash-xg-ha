@@ -111,6 +111,20 @@ void ColorSplashLightOutput::write_state(light::LightState *state) {
     return;
   }
 
+  // Post-user-preset short-circuit: the JS card fires
+  // light.turn_on(effect:None) right after a color_preset_recall
+  // so HA's effect attribute clears. That call lands here as a
+  // bare ON; without this guard, last_preset_byte() (the recall's
+  // start_byte) would re-fire and stomp the just-recalled preset
+  // color. The flag clears via send_effect_byte the next time any
+  // non-recall byte goes out.
+  if (!this->parent_->last_recalled_slug().empty()) {
+    ESP_LOGD(TAG,
+             "post-recall turn_on: skipping last_preset replay "
+             "to preserve the active user preset");
+    return;
+  }
+
   const auto last_preset = this->parent_->last_preset_byte();
   uint8_t byte_to_send = last_preset.value_or(0x0b);  // Arctic White
   this->parent_->send_effect_byte(byte_to_send);
