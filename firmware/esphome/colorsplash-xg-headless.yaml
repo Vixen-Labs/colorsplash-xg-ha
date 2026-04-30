@@ -259,7 +259,7 @@ text_sensor:
   - platform: template
     name: "Pool Last Command"
     id: pool_last_command
-    update_interval: 15s
+    update_interval: 1s
     lambda: 'return id(xg).last_command_name();'
   # Surfaces the controller's most recent indication echo — the
   # authoritative "command accepted" signal per PROTOCOL.md §
