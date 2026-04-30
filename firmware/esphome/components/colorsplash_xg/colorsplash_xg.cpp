@@ -5,6 +5,7 @@
 #include "esphome/components/esp32_ble_client/ble_characteristic.h"
 #include "esphome/components/esp32_ble_client/ble_descriptor.h"
 #include "esphome/components/light/light_state.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
@@ -404,6 +405,7 @@ void ColorSplashXG::send_effect_byte(uint8_t byte_value) {
         this->last_displayed_color_hex_.clear();
         break;
     }
+    this->publish_displayed_color_();
   }
   this->try_drain_pending_();
 }
@@ -565,6 +567,7 @@ ColorSplashXG::PickRecipe ColorSplashXG::pick_color(
   std::snprintf(hex, sizeof(hex), "#%02x%02x%02x",
                 rec.r, rec.g, rec.b);
   this->last_displayed_color_hex_ = hex;
+  this->publish_displayed_color_();
   return rec;
 }
 
@@ -613,6 +616,16 @@ void ColorSplashXG::load_color_presets_() {
   this->preset_store_.count = 0;
   std::memset(this->preset_store_.entries, 0,
               sizeof(this->preset_store_.entries));
+}
+
+void ColorSplashXG::publish_displayed_color_() {
+  if (this->displayed_color_sensor_ == nullptr) return;
+  if (this->last_displayed_color_hex_ ==
+      this->last_published_displayed_color_hex_) return;
+  this->displayed_color_sensor_->publish_state(
+      this->last_displayed_color_hex_);
+  this->last_published_displayed_color_hex_ =
+      this->last_displayed_color_hex_;
 }
 
 void ColorSplashXG::save_color_presets_() {
@@ -705,6 +718,7 @@ bool ColorSplashXG::color_preset_recall(const std::string &slug) {
                     slot.r, slot.g, slot.b);
       this->last_displayed_color_hex_ = hex;
       this->last_recalled_slug_ = slug;
+      this->publish_displayed_color_();
       return true;
     }
   }

@@ -25,6 +25,17 @@ esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
   min_version: 2026.4.0
+  # Wire the displayed-color text_sensor into the bridge so the
+  # component can publish_state() proactively whenever the
+  # fixture's color changes — bypasses the template's polling
+  # interval for snappy card-UI feedback. Runs after all
+  # components have set up.
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          id(xg).set_displayed_color_sensor(
+              id(pool_last_displayed_color));
 
 esp32:
   # Plain ESP32-WROOM-32 dev kit. ESPHome's default `arduino`
