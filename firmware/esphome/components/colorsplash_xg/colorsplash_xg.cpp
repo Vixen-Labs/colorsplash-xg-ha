@@ -728,6 +728,21 @@ bool ColorSplashXG::color_preset_recall(const std::string &slug) {
       this->last_displayed_color_hex_ = hex;
       this->last_recalled_slug_ = slug;
       this->publish_displayed_color_();
+      // Clear HA's stale effect attribute (the start_byte we
+      // fired through send_effect_byte was a hw effect's byte,
+      // but the user's intent is a saved preset, not that
+      // effect). Force-state on at the same time. Safe to fire
+      // because the bare-ON branch in colorsplash_light's
+      // write_state checks last_recalled_slug_ and short-
+      // circuits the last_preset replay — no extra BLE bytes.
+      // Covers both card-side recall and scene-initiated recall
+      // (via select.select_option) uniformly.
+      if (this->light_state_ != nullptr) {
+        auto call = this->light_state_->make_call();
+        call.set_effect("None");
+        call.set_state(true);
+        call.perform();
+      }
       return true;
     }
   }
