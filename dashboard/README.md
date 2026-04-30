@@ -214,21 +214,40 @@ This repo ships a HA blueprint that bridges the gap. It listens
 for a chosen scene's `scene.turn_on` event and replays the exact
 recipe via the bridge's `color_preset_recall` service.
 
-**One-time setup:**
+**One-time setup. Pick whichever installation path matches your situation:**
 
-1. In HA → Settings → Automations & Scenes → Blueprints, click
-   "Import Blueprint" and paste:
+#### Path 1 — manual file copy (works for private repos)
 
-   ```
-   https://github.com/swizzlevixen/colorsplash-xg-ha/blob/main/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml
-   ```
+Copy the blueprint into HA's blueprints directory:
 
-2. Click "Use this blueprint", choose the scene to listen for and
+```bash
+# From your HA config root (e.g. /config or ~/.homeassistant)
+mkdir -p blueprints/automation/colorsplash_xg
+cp /path/to/colorsplash-xg-ha/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml \
+   blueprints/automation/colorsplash_xg/
+```
+
+Then HA → Developer Tools → YAML → "Reload Blueprints" (or
+restart HA). The blueprint will appear under Settings →
+Automations & Scenes → Blueprints.
+
+#### Path 2 — import from URL (once the repo is public)
+
+In HA → Settings → Automations & Scenes → Blueprints, click
+"Import Blueprint" and paste:
+
+```
+https://github.com/swizzlevixen/colorsplash-xg-ha/blob/main/dashboard/blueprints/colorsplash_xg_preset_on_scene.yaml
+```
+
+#### After installation (either path)
+
+1. Click "Use this blueprint", choose the scene to listen for and
    the slug of your saved preset, and (optionally) tune the
    `recall_delay_ms` if you see a brief flicker before the preset
    color settles.
 
-3. **Recommended:** remove `light.pool_light` from the scene's
+2. **Recommended:** remove `light.pool_light` from the scene's
    entity list. The blueprint handles the bridge separately, so
    leaving the light in the scene only causes a brief
    LUT-picked color to flash before the recipe replay wins.
