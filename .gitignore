@@ -36,3 +36,4 @@ Thumbs.db
 
 # Claude Code — per-user permission allow-list (not portable between people)
 .claude/settings.local.json
+.env
