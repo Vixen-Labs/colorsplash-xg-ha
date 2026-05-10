@@ -12028,7 +12028,7 @@ const SHOW_LUT_DATA = [
 const SHOW_LOOPS_MS = {
   7: 60000,  // Nova
   2: 25000,  // Super Nova
-  3: 5200,  // Northern Lights
+  3: 120000,  // Northern Lights
   4: 32000,  // Tidal Wave
   5: 12200,  // Patriot Dream
   6: 31700,  // Desert Skies
