@@ -70,6 +70,7 @@ import numpy as np
 
 try:
     from aioesphomeapi import APIClient, UserService
+    from aioesphomeapi.core import APIConnectionError
 except ImportError as exc:  # pragma: no cover
     print(f"missing aioesphomeapi: pip install aioesphomeapi  ({exc})",
           file=sys.stderr)
@@ -106,12 +107,57 @@ SHOWS: list[tuple[int, str]] = [
 
 @dataclass
 class BridgeClient:
-    """Thin wrapper over aioesphomeapi for the calibration use case."""
-    api: APIClient
-    send_byte_service: UserService
+    """Send bytes to the controller via either:
+      (a) Home Assistant REST API (preferred — HA holds the bridge
+          connection robustly across long sessions), or
+      (b) direct aioesphomeapi (fallback — vulnerable to ~4 min
+          keepalive drops when no API traffic flows during cv2-only
+          show sampling).
+
+    Selection: if HA_URL and HA_TOKEN env vars are set, use (a).
+    Otherwise use (b) with --host/--port/--api-key.
+    """
+    api: Optional[APIClient] = None
+    send_byte_service: Optional[UserService] = None
+    # aioesphomeapi-backed reconnect needs these
+    host: str = ""
+    port: int = 0
+    noise_psk: str = ""
+    # HA REST-backed
+    ha_url: str = ""
+    ha_token: str = ""
+    ha_service_path: str = ""
+
+    @property
+    def via_ha(self) -> bool:
+        return bool(self.ha_url and self.ha_token)
 
     @classmethod
     async def connect(cls, host: str, port: int, noise_psk: str) -> "BridgeClient":
+        ha_url = os.environ.get("HA_URL", "").rstrip("/")
+        ha_token = os.environ.get("HA_TOKEN", "")
+        if ha_url and ha_token:
+            # HA path: a single GET to /api/ verifies token + reachability.
+            # The bridge's user-service is exposed as
+            # esphome.<device_name_with_underscores>_pool_send_byte.
+            import urllib.request, urllib.error
+            req = urllib.request.Request(
+                f"{ha_url}/api/",
+                headers={"Authorization": f"Bearer {ha_token}"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    if r.status != 200:
+                        raise RuntimeError(f"HA /api returned {r.status}")
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"HA auth failed: {exc}")
+            print(f"    using Home Assistant REST API at {ha_url}")
+            return cls(
+                ha_url=ha_url, ha_token=ha_token,
+                ha_service_path="/api/services/esphome/"
+                                "colorsplash_xg_bridge_pool_send_byte",
+            )
+
         api = APIClient(host, port, password="", noise_psk=noise_psk)
         await api.connect(login=True)
         _, services = await api.list_entities_services()
@@ -125,7 +171,50 @@ class BridgeClient:
                 f"available services: {names}. "
                 f"Re-flash with the latest colorsplash-xg-headless.yaml."
             )
-        return cls(api=api, send_byte_service=send_byte_service)
+        print(f"    using direct aioesphomeapi at {host}:{port}")
+        return cls(api=api, send_byte_service=send_byte_service,
+                   host=host, port=port, noise_psk=noise_psk)
+
+    async def _reconnect(self) -> None:
+        """Re-establish the aioesphomeapi connection after an EOF.
+        Not needed in HA mode — each REST call is independent."""
+        if self.via_ha:
+            return
+        try:
+            await self.api.disconnect()
+        except Exception:
+            pass
+        api = APIClient(self.host, self.port, password="",
+                        noise_psk=self.noise_psk)
+        await api.connect(login=True)
+        _, services = await api.list_entities_services()
+        send_byte_service = next(
+            (s for s in services if s.name == "pool_send_byte"), None,
+        )
+        if send_byte_service is None:
+            raise RuntimeError("reconnect: pool_send_byte missing")
+        self.api = api
+        self.send_byte_service = send_byte_service
+
+    async def _ha_post_byte(self, byte_value: int) -> None:
+        """POST one byte to HA's esphome service. Sync urllib wrapped in
+        a thread so we don't block the event loop."""
+        import urllib.request
+        req = urllib.request.Request(
+            f"{self.ha_url}{self.ha_service_path}",
+            data=json.dumps({"byte": int(byte_value)}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.ha_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as r:
+                if r.status != 200:
+                    raise RuntimeError(
+                        f"HA service returned {r.status}")
+        await asyncio.to_thread(_do)
 
     async def send_byte(self, byte_value: int,
                         events_file=None,
@@ -156,12 +245,25 @@ class BridgeClient:
             }
             events_file.write(json.dumps(event) + "\n")
             events_file.flush()
-        await self.api.execute_service(
-            self.send_byte_service, {"byte": byte_value},
-        )
+        if self.via_ha:
+            await self._ha_post_byte(byte_value)
+        else:
+            try:
+                await self.api.execute_service(
+                    self.send_byte_service, {"byte": byte_value},
+                )
+            except APIConnectionError as exc:
+                print(f"    [reconnect] API dropped ({exc}); reconnecting…")
+                await self._reconnect()
+                await self.api.execute_service(
+                    self.send_byte_service, {"byte": byte_value},
+                )
+                print(f"    [reconnect] OK; retried byte 0x{byte_value:02x}")
         return t_send
 
     async def disconnect(self) -> None:
+        if self.via_ha:
+            return  # nothing to disconnect; each REST call is independent
         await self.api.disconnect()
 
 
@@ -383,8 +485,10 @@ class CalibrationResult:
 
 async def run_calibration(args: argparse.Namespace) -> int:
     noise_psk = os.environ.get("COLORSPLASH_API_KEY") or args.api_key
-    if not noise_psk:
-        print("error: pass --api-key or set COLORSPLASH_API_KEY env var",
+    using_ha = bool(os.environ.get("HA_URL") and os.environ.get("HA_TOKEN"))
+    if not noise_psk and not using_ha:
+        print("error: pass --api-key / set COLORSPLASH_API_KEY env var, "
+              "or set HA_URL+HA_TOKEN to route via Home Assistant",
               file=sys.stderr)
         return 2
 
@@ -535,6 +639,13 @@ async def run_calibration(args: argparse.Namespace) -> int:
                 for t, rgb in samples
             ]
             print(f"     captured {len(samples)} samples")
+            # Checkpoint: persist after every show so a connection
+            # drop mid-session preserves whatever's already done.
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(result.to_json(), indent=2))
+            print(f"     [checkpoint] wrote {out_path} "
+                  f"({out_path.stat().st_size} bytes)")
             # Brief pause between shows so the fixture has a moment
             # to react to the next start byte from a known state
             # rather than mid-cycle. 2 s is enough for the BLE link

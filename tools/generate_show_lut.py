@@ -101,10 +101,20 @@ SHOW_BYTES = {
 # DEFAULT_LOOP_MS fallback — generous enough to expose most
 # colors, not so long that the user waits forever.
 SHOW_LOOP_MS = {
-    "Nova":           32000,  # 16 colors × ~1.93 s — deterministic
-    "Tidal Wave":     32000,
-    "Patriot Dream":  12200,
-    "Desert Skies":   32000,
+    "Nova":              60000,  # detect_loop_periods.py on v5: score 4.9
+    "Super Nova":        25000,  # detect_loop_periods.py on v5: score 6.5
+    "Tidal Wave":        32000,  # detect_loop_periods.py on v5: score 3.5
+    "Patriot Dream":     12200,  # autocorr picked 24400 (2× harmonic);
+                                 # 12200 alternate (score 7.1) is the
+                                 # true fundamental — keep it for picker
+                                 # responsiveness
+    "Desert Skies":      31700,  # detect_loop_periods.py on v5: score 4.0
+    "Peruvian Paradise": 47900,  # detect_loop_periods.py on v5: score 3.8
+                                 # (replaces 30000 DEFAULT fallback)
+    # Northern Lights has no clean autocorrelation cycle (aurora-like
+    # chaotic colors); detector lands at search-min boundary every
+    # time. Use PR #60's manually-determined 5200 ms perceptual
+    # sub-cycle below in CARD_SHOW_LOOP_MS instead.
 }
 DEFAULT_LOOP_MS = 30000
 
@@ -122,13 +132,13 @@ DEFAULT_LOOP_MS = 30000
 # only control the card's timeline strip width and click-mapping
 # range.
 CARD_SHOW_LOOP_MS = {
-    "Nova":              32000,  # cycle not fully resolved in capture
-    "Tidal Wave":        32400,  # was 32000, refined from un-clipped data
-    "Patriot Dream":     12200,
-    "Desert Skies":      32000,
-    "Northern Lights":    5200,  # was 30000 (DEFAULT) — fast sub-cycle
-    "Peruvian Paradise": 30000,  # capture too short to refine
-    "Super Nova":        32000,  # excluded from picker, keep parity with Nova
+    "Nova":              60000,  # detect_loop_periods.py on v5: score 4.9
+    "Tidal Wave":        32000,  # detect_loop_periods.py on v5: score 3.5
+    "Patriot Dream":     12200,  # documented; 24400 detected as 2× harmonic
+    "Desert Skies":      31700,  # detect_loop_periods.py on v5: score 4.0
+    "Northern Lights":    5200,  # PR #60 manual; aurora-chaotic, no autocorr
+    "Peruvian Paradise": 47900,  # detect_loop_periods.py on v5: score 3.8
+    "Super Nova":        25000,  # detect_loop_periods.py on v5: score 6.5
 }
 
 # Shows whose color sequence is discrete (no blending) and whose
