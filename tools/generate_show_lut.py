@@ -136,7 +136,13 @@ CARD_SHOW_LOOP_MS = {
     "Tidal Wave":        32000,  # detect_loop_periods.py on v5: score 3.5
     "Patriot Dream":     12200,  # documented; 24400 detected as 2× harmonic
     "Desert Skies":      31700,  # detect_loop_periods.py on v5: score 4.0
-    "Northern Lights":    5200,  # PR #60 manual; aurora-chaotic, no autocorr
+    "Northern Lights":  120000,  # aurora-chaotic; no autocorr cycle, but
+                                 # actual color phases run 10-30 s each
+                                 # (blue→red→purple→green sweeps over
+                                 # ~120 s). PR #60's 5200 ms hypothesis
+                                 # only showed the post-blackout blue
+                                 # phase. 120 s window shows the show's
+                                 # full color range in the card strip.
     "Peruvian Paradise": 47900,  # detect_loop_periods.py on v5: score 3.8
     "Super Nova":        25000,  # detect_loop_periods.py on v5: score 6.5
 }
