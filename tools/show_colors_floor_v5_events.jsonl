@@ -1,0 +1,16 @@
+{"wall_clock": "2026-05-10T07:22:51.829+00:00", "monotonic": 159021.669071583, "kind": "run-start", "label": "calibration session start"}
+{"wall_clock": "2026-05-10T07:22:51.829+00:00", "monotonic": 159021.669157458, "byte": 0, "byte_hex": "0x00", "kind": "ambient", "label": "Standby (ambient baseline)"}
+{"wall_clock": "2026-05-10T07:23:09.046+00:00", "monotonic": 159038.885123625, "byte": 8, "byte_hex": "0x08", "kind": "solid", "label": "Parisian Blue"}
+{"wall_clock": "2026-05-10T07:23:26.120+00:00", "monotonic": 159055.959741208, "byte": 10, "byte_hex": "0x0a", "kind": "solid", "label": "Brazilian Red"}
+{"wall_clock": "2026-05-10T07:23:43.161+00:00", "monotonic": 159072.999884416, "byte": 11, "byte_hex": "0x0b", "kind": "solid", "label": "Arctic White"}
+{"wall_clock": "2026-05-10T07:24:00.245+00:00", "monotonic": 159090.084673791, "byte": 12, "byte_hex": "0x0c", "kind": "solid", "label": "Miami Pink"}
+{"wall_clock": "2026-05-10T07:24:17.317+00:00", "monotonic": 159107.155855541, "byte": 9, "byte_hex": "0x09", "kind": "solid", "label": "New Zealand Green"}
+{"wall_clock": "2026-05-10T07:24:34.412+00:00", "monotonic": 159124.251001958, "byte": 7, "byte_hex": "0x07", "kind": "show", "label": "Nova"}
+{"wall_clock": "2026-05-10T07:28:36.481+00:00", "monotonic": 159366.318899, "byte": 2, "byte_hex": "0x02", "kind": "show", "label": "Super Nova"}
+{"wall_clock": "2026-05-10T07:32:38.559+00:00", "monotonic": 159608.395325875, "byte": 3, "byte_hex": "0x03", "kind": "show", "label": "Northern Lights"}
+{"wall_clock": "2026-05-10T07:36:40.640+00:00", "monotonic": 159850.474238625, "byte": 4, "byte_hex": "0x04", "kind": "show", "label": "Tidal Wave"}
+{"wall_clock": "2026-05-10T07:40:42.691+00:00", "monotonic": 160092.524378166, "byte": 5, "byte_hex": "0x05", "kind": "show", "label": "Patriot Dream"}
+{"wall_clock": "2026-05-10T07:44:44.773+00:00", "monotonic": 160334.60453125, "byte": 6, "byte_hex": "0x06", "kind": "show", "label": "Desert Skies"}
+{"wall_clock": "2026-05-10T07:48:46.839+00:00", "monotonic": 160576.692611458, "byte": 1, "byte_hex": "0x01", "kind": "show", "label": "Peruvian Paradise"}
+{"wall_clock": "2026-05-10T07:52:48.905+00:00", "monotonic": 160818.759615458, "byte": 0, "byte_hex": "0x00", "kind": "end-standby", "label": "end-of-run Standby"}
+{"wall_clock": "2026-05-10T07:52:48.996+00:00", "monotonic": 160818.85055775, "kind": "run-end", "label": "calibration session end"}
